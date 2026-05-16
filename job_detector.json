@@ -1,0 +1,927 @@
+{
+  "name": "Job Detector",
+  "nodes": [
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "automation-alerts",
+          "mode": "name"
+        },
+        "text": "={{ \n  (() => {\n    const o = $(\"LLM: normalize message\").first().json.output;\n    \n    let msg = o.slack_message;\n    \n    const score = Number(String(o.closeness_score).split(\"/\")[0]);\n    \n    if (score >= 80) {\n      msg += \"\\n\\n*Супровідний лист:*\\n\" + o.cover_letter;\n    }\n    \n    msg += \"\\n\\n📊 *Аналіз резюме:*\";\n    msg += \"\\n*Релевантність:* \" + o.relevance_overall + \"/100\";\n    msg += \" (Навички: \" + o.relevance_skills + \" | Досвід: \" + o.relevance_experience + \" | ATS: \" + o.relevance_ats + \")\";\n    \n    let actions = o.improvement_actions;\n    if (typeof actions === 'string') {\n      try { actions = JSON.parse(actions); } catch(e) { actions = []; }\n    }\n    \n    if (actions && actions.length > 0) {\n      msg += \"\\n\\n✅ *Дії:*\";\n      actions.forEach(a => {\n        msg += \"\\n• \" + a.action + \" (\" + a.timeframe + \")\";\n      });\n    }\n    \n    if (o.summary) {\n      msg += \"\\n\\n💡 *Підсумок:* \" + o.summary;\n    }\n    \n    return msg;\n  })()\n}}",
+        "otherOptions": {}
+      },
+      "id": "8e4f2bb3-11fe-43ee-82cd-a45c8eed9979",
+      "name": "Send Notification to Slack",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        2688,
+        112
+      ],
+      "webhookId": "6df27485-5b77-419f-ab69-eee5590658bc",
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "chatId": "605332600",
+        "text": "={{ \n  (() => {\n    const o = $(\"LLM: normalize message\").first().json.output;\n    \n    let msg = o.telegram_message;\n    \n    // Parse closeness_score — handle \"60/100\" or \"60\"\n    const score = Number(String(o.closeness_score).split(\"/\")[0]);\n    \n    if (score >= 80) {\n      msg += \"\\n\\n<b>Супровідний лист:</b>\\n\" + o.cover_letter;\n    }\n    \n    msg += \"\\n\\n📊 <b>Аналіз резюме:</b>\";\n    msg += \"\\n<b>Релевантність:</b> \" + o.relevance_overall + \"/100\";\n    msg += \" (Навички: \" + o.relevance_skills + \" | Досвід: \" + o.relevance_experience + \" | ATS: \" + o.relevance_ats + \")\";\n    \n    // Parse improvement_actions if it's a string\n    let actions = o.improvement_actions;\n    if (typeof actions === 'string') {\n      try { actions = JSON.parse(actions); } catch(e) { actions = []; }\n    }\n    \n    if (actions && actions.length > 0) {\n      msg += \"\\n\\n✅ <b>Дії:</b>\";\n      actions.forEach(a => {\n        msg += \"\\n• \" + a.action + \" (\" + a.timeframe + \")\";\n      });\n    }\n    \n    if (o.summary) {\n      msg += \"\\n\\n💡 <b>Підсумок:</b> \" + o.summary;\n    }\n    \n    return msg;\n  })()\n}}",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2688,
+        304
+      ],
+      "id": "729bc863-2a50-4bbe-b657-c1d791362bf9",
+      "name": "Send a text message",
+      "webhookId": "2e047412-9551-4895-9e86-e98ce5a6951d",
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.1-flash-lite",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        1472,
+        240
+      ],
+      "id": "1392b8b7-922b-4e09-93b2-4abd14093c42",
+      "name": "Google Gemini Chat Model",
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"closeness_score\": \"A number from 0 to 100 representing how well the job matches the candidate's specific technical and domain experience.\",\n  \"cover_letter\": \"The generated cover letter text. If the closeness_score is below 85, this should be an empty string.\",\n  \"slack_message\": \"A clean, standard Markdown-formatted summary for Slack.\",\n  \"telegram_message\": \"A Telegram-ready summary translated to Ukrainian, strictly following MarkdownV2 escaping rules.\"\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1648,
+        240
+      ],
+      "id": "7b8b4e97-2d9c-48b5-80a0-3e177067eabd",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": false
+        }
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        464,
+        0
+      ],
+      "id": "9f4ae8c0-0f59-4833-b6dc-800b491c8505",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "4087cf73-0bf9-4cc4-afcf-68eae4505737",
+              "leftValue": "={{ Number($json.output.closeness_score) }}",
+              "rightValue": 80,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1840,
+        208
+      ],
+      "id": "99b8e042-b31a-4665-9c5b-1c636dfebc33",
+      "name": "SMS Gateaway"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        976,
+        -128
+      ],
+      "id": "40eccae5-3562-456d-b414-1b6196e900ac",
+      "name": "5s delay",
+      "webhookId": "a2944864-fc3c-4d90-a550-4c080774c040"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "40b326a0-723c-4df6-b69f-6977dd52996d",
+              "leftValue": "={{ $runIndex }}",
+              "rightValue": 1,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        720,
+        0
+      ],
+      "id": "2f81059a-12ea-457b-9a21-979872110f45",
+      "name": "If not the first iteration"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 4
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -480,
+        0
+      ],
+      "id": "171cbb54-1054-4aad-ac9f-50a35dda0f61",
+      "name": "Trigger every 4 hours"
+    },
+    {
+      "parameters": {
+        "operation": "Run actor and get dataset",
+        "actorSource": "store",
+        "actorId": {
+          "__rl": true,
+          "value": "2rJKkhh7vjpX7pvjg",
+          "mode": "id"
+        },
+        "customBody": "={\n    \"enrichCompanyData\": false,\n    \"keyword\": [\n        \"React Native\",\n        \"Full Stack\",\n        \"Node.js\",\n        \"JavaScript\",\n        \"TypeScript\",\n        \"Front End\"\n    ],\n    \"location\": \"Kyiv, Ukraine\",\n    \"maxItems\": 150,\n    \"publishedAt\": \"r86400\",\n    \"resumeKeywords\": [\n        {\n            \"keyword\": \"JavaScript\",\n            \"aliases\": [ \"JS\" ]\n        },\n        {\n            \"keyword\": \"TypeScript\",\n            \"aliases\": [ \"TS\" ]\n        },\n        {\n            \"keyword\": \"Node.js\",\n            \"aliases\": [ \"Node\", \"NodeJS\" ]\n        },\n        {\n            \"keyword\": \"React Native\",\n            \"aliases\": [ \"RN\" ]\n        },\n        {\n            \"keyword\": \"React\"\n        },\n        {\n            \"keyword\": \"Expo\"\n        }\n    ],\n    \"saveOnlyUniqueItems\": true\n}",
+        "timeout": {},
+        "authentication": "apifyOAuth2Api"
+      },
+      "type": "@apify/n8n-nodes-apify.apify",
+      "typeVersion": 1,
+      "position": [
+        -176,
+        0
+      ],
+      "id": "d5d6f4ce-b533-42c6-b0d5-3be96635e967",
+      "name": "Find LinkedIn Jobs",
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Job Details:\nTitle: {{ $json.jobTitle }}\nCompany: {{ $json.companyName }}\nURL: {{ $json.jobUrl }}\nLocation: {{ $json.location }}\nContract: {{ $json.contractType }}\nExperience Level: {{ $json.experienceLevel }}\nYears Required: {{ $json.yearsOfExperience ? JSON.stringify($json.yearsOfExperience) : 'Not specified' }}\nSalary: {{ $json.salaryInfo && $json.salaryInfo.length > 0 ? JSON.stringify($json.salaryInfo) : 'Not disclosed' }}\nApplications: {{ $json.applicationsCount || 'Unknown' }}\nWork Type: {{ $json.workType }}\nSector: {{ $json.sector }}\nApply Type: {{ $json.applyType }}\nKeyword Match: {{ $json.keywordMatchScorePercentage }}% (Matched: {{ ($json.matchedKeywords || []).join(', ') || 'none' }} | Missing: {{ ($json.unmatchedKeywords || []).join(', ') || 'none' }})\nPosted: {{ $json.postedTime }}\nDescription: {{ $json.jobDescription }}\n\nCandidate Background:\nExperienced Middle Full Stack Developer adept in React Native and Next.js, with a strong foundation in API development and asynchronous workflows. Proven ability to handle asynchronous processing and implement AI-driven automation to increase operational efficiency and reduce latency. Skilled in building robust, user-centric applications that support scalable business growth and deliver seamless customer experiences. Committed to applying advanced development skills to generate impactful solutions aligned with strategic objectives.\nArchitected an efficient batch processing workflow for popular payment calculations, maintaining daily execution times below 0.6ms.\nIntegrated AI for automated file, text, and OCR credential parsing, reducing manual handling by 50%.\nAccelerated payment flow by 40% using optimistic UI updates to reduce perceived transaction latency.\nRefactored the codebase using Zustand and React Query to optimize state and network layers, significantly improving developer experience (DX).\nResolved security vulnerabilities and implemented comprehensive E2E test coverage.\nDeveloped 60FPS UI animations and robust deep-linking handlers for improved engagement.\nAutomated a secure merchant verification pipeline, significantly reducing the time spent on manual reviews.\n\nTask:\ncloseness_score: Score the closeness of this job to the candidate's profile from 0 to 100. Evaluate based on the required tech stack (React Native/Node.js) and domain (Fintech/Scalability). Give a score of 0 to entirely unrelated roles (e.g., HR, Real Estate, Creative Director).\n\ncover_letter: IF the closeness_score is 80 or higher, write a concise, professional cover letter (under 150 words) targeting this specific job. IMPORTANT: write the cover letter in Ukrainian. Emphasize the high-scalability calculation logic and fintech experience. IF the score is below 80, output an empty string \"\". Don't halucinate, and use the info for writing letter only which is relevant to my CV. No need in an additional working experience.\n\nslack_message: Write a brief Ukrainian alert using Slack Markdown (*bold*). Include:\n- Job Title, Company, closeness_score\n- 💰 Salary (if available, otherwise \"Не вказано\")\n- 📋 Experience required (years + context if available)\n- 👥 Applications status (e.g. \"Серед перших 25\")\n- 🏷 Contract type and work model\n- 🔑 Matched/missing keywords from candidate's stack\n- Link: [Переглянути вакансію](URL)\n\ntelegram_message: Same structure as Slack but use ONLY basic Telegram HTML: <b> for bold, <i> for italic, <a> for links. NO Markdown (*, #, _).\nTemplate:\n<b>Нова вакансія</b>\n👤 <b>Позиція:</b> [Job Title]\n🏢 <b>Компанія:</b> [Company Name]\n📍 <b>Локація:</b> [Location]\n🎯 <b>Збіг:</b> [Score]/100\n💰 <b>Зарплата:</b> [Salary or \"Не вказано\"]\n📋 <b>Досвід:</b> [Years required or \"Не вказано\"]\n👥 <b>Заявки:</b> [Applications count]\n🏷 <b>Тип:</b> [Contract] | [Apply type]\n🔑 <b>Збіг стеку:</b> [matched keywords] | ❌ [missing keywords]\n🔗 <a href=\"[URL]\">Відкрити на LinkedIn</a>\n\nReturn the output matching the requested JSON schema.",
+        "hasOutputParser": true,
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        1488,
+        16
+      ],
+      "id": "13c3c8c0-9c5d-48ee-8d3d-5aa18678699d",
+      "name": "LLM: calculate job relevance",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "executeOnce": false,
+      "maxTries": 2,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        3184,
+        400
+      ],
+      "id": "5f0e6b28-5ad9-4f9a-9440-7f3380c66a95",
+      "name": "Finished successfully iteration"
+    },
+    {
+      "parameters": {
+        "operation": "Run actor and get dataset",
+        "actorSource": "store",
+        "actorId": {
+          "__rl": true,
+          "value": "=dylMGHNi91mnRsuqB",
+          "mode": "id"
+        },
+        "customBody": "={{ JSON.stringify({\n      additionalContext: $(\"Loop Over Items\").first().json.jobDescription,\n      experienceLevel: \"mid\",\n    \"resumeText\": \"DMYTRO HONCHARENKO\\nMiddle Full Stack Engineer | React & Node.js | AI Enthusiast | On-site | Remote\\n+\\n380991128253\\nd.goncharenko.man@gmail.com\\nhttps://www.linkedin.com/in/dimahoncharenko-dev\\nKyivska Oblast, Ukraine\\nEXPERIENCE\\nMobile Full Stack Developer\\nReact Native (Expo)\\n03/2025 - 04/2026\\nArchitected an efficient batch processing workflow for popular payment calculations, maintaining daily execution times below 0.6ms.\\nIntegrated AI for automated file, text, and OCR credential parsing, reducing manual handling by 50%.\\nAccelerated payment flow by 40% using optimistic UI updates to reduce perceived transaction latency.\\nRefactored the codebase using Zustand and React Query to optimize state and network layers, significantly improving developer experience (DX).\\nResolved security vulnerabilities and implemented comprehensive E2E test coverage.\\nDeveloped 60FPS UI animations and robust deep-linking handlers for improved engagement.\\nAutomated a secure merchant verification pipeline, significantly reducing the time spent on manual reviews.\\nFreelance Front End Developer\\nNext.js\\n04/2024 - 03/2025\\nWorldwide\\nSelf Employed ⚫ Worldwide\\nHappy Tails (E-commerce Platform): Developed a comprehensive online pet supply storefront utilizing Next.js, Tailwind CSS, and React Query\\nIntegrated an AI-powered chat and configured Google Search Console for traffic monitoring and indexing\\nEngineered complex catalog features including search, dynamic filtering, sorting, and shopping cart functionality\\nPasta La Pepito (Online Restaurant): Built a seamless customer ordering platform and a dedicated administrative dashboard leveraging Next.js, Zustand, and React Admin\\nIntegrated LiqPay for secure payment processing and implemented custom delivery workflows\\nEDUCATION\\nMaster, Software Engineering\\nNational Aviation University\\n12/2023\\nKyiv, Ukraine\\nMaster, Digital Technologies\\nMykhailo Dragomanov Ukrainian State University\\n09/2018 - 12/2023\\nKyiv, Ukraine\\nLANGUAGES\\nEnglish\\nUpper-Intermediate\\nUkrainian\\nNative\\nSUMMARY\\nExperienced Middle Full Stack Developer adept in React Native and Next.js, with a strong foundation in API development and asynchronous workflows. Proven ability to handle asynchronous processing and implement AI-driven automation to increase operational efficiency and reduce latency. Skilled in building robust, user-centric applications that support scalable business growth and deliver seamless customer experiences. Committed to applying advanced development skills to generate impactful solutions aligned with strategic objectives.\\nKEY ACHIEVEMENTS\\nPayment Processing Boost\\nBoosted transaction processing speed by 40% by separation the payment flow into distinct asynchronous ones.\\nPopular Payments Processing\\nEngineered high-performance calculation logic for popular payments, supporting tens of thousands of active users with daily execution times under 0.6ms.\\nAI Integration Success\\nAutomated data parsing using AI, decreasing manual data entry by 50%, enhancing overall efficiency.\\nSKILLS\\nFrontend\\nHTML/CSS/JavaScript\\nTypeScript\\nReact.js\\nZustand\\nZod\\nExpo\\nGit\\nWebpack\\nClaude Code\\nApollo Client\\nAgile\\nTanStack React Query\\nReact Hook Form\\nWebpack Module Federation\\nBackend\\nNode.js/Express\\nApollo Server\\nKafka\\nRabbitMQ/BullMQ\\nVisa\\nPostgreSQL\\nMasterCard\\nNestJS\\nREST\\nRedis\\nGraphQL\\nMicroservices\\nNoSQL\\nElasticsearch\\nWeb Sockets\",\n  targetRole: $(\"Loop Over Items\").first().json.jobTitle\n}) }}",
+        "timeout": {},
+        "authentication": "apifyOAuth2Api"
+      },
+      "type": "@apify/n8n-nodes-apify.apify",
+      "typeVersion": 1,
+      "position": [
+        2064,
+        208
+      ],
+      "id": "050bcb4d-9be2-4536-9089-f0495fedb1ad",
+      "name": "Find CV suggestions",
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.1-flash-lite",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        2272,
+        432
+      ],
+      "id": "8c27eab9-28ca-402b-a944-f5693d2ed2b0",
+      "name": "Google Gemini Chat Model1",
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=FIRST LLM OUTPUT (job matching):\ncloseness_score: {{ $(\"SMS Gateaway\").first().json.output.closeness_score }}\ncover_letter: {{ $(\"SMS Gateaway\").first().json.output.cover_letter }}\nslack_message: {{ $(\"SMS Gateaway\").first().json.output.slack_message }}\ntelegram_message: {{ $(\"SMS Gateaway\").first().json.output.telegram_message }}\n\nCV ANALYSIS:\n{{ JSON.stringify($(\"Find CV suggestions\").first().json) }}\n\nORIGINAL JOB METADATA:\nTitle: {{ $(\"Loop Over Items\").first().json.jobTitle }}\nCompany: {{ $(\"Loop Over Items\").first().json.companyName }}\nLocation: {{ $(\"Loop Over Items\").first().json.location }}\nURL: {{ $(\"Loop Over Items\").first().json.jobUrl }}\nSalary: {{ $(\"Loop Over Items\").first().json.salaryInfo && $(\"Loop Over Items\").first().json.salaryInfo.length > 0 ? JSON.stringify($(\"Loop Over Items\").first().json.salaryInfo) : 'Not disclosed' }}\nExperience: {{ $(\"Loop Over Items\").first().json.yearsOfExperience ? JSON.stringify($(\"Loop Over Items\").first().json.yearsOfExperience) : 'Not specified' }}\nApplications: {{ $(\"Loop Over Items\").first().json.applicationsCount || 'Unknown' }}\nContract: {{ $(\"Loop Over Items\").first().json.contractType }}\nApply Type: {{ $(\"Loop Over Items\").first().json.applyType }}\nKeyword Match: {{ $(\"Loop Over Items\").first().json.keywordMatchScorePercentage }}%\nMatched: {{ ($(\"Loop Over Items\").first().json.matchedKeywords || []).join(', ') || 'none' }}\nMissing: {{ ($(\"Loop Over Items\").first().json.unmatchedKeywords || []).join(', ') || 'none' }}\nSector: {{ $(\"Loop Over Items\").first().json.sector }}\nWork Type: {{ $(\"Loop Over Items\").first().json.workType }}\nPosted: {{ $(\"Loop Over Items\").first().json.postedTime }}",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "message": "You are a precise data transformer and message normalizer. You receive: 1. Job matching data from the first LLM (closeness_score, cover_letter, slack_message, telegram_message) 2. CV analysis data (relevanceScore, skillGaps, atsKeywords, improvementActions, summary) 3. Original job metadata (salary, location, experience, applications, keywords, etc.)  YOUR TASK: - Translate ALL content to Ukrainian - Replace any candidate name (DMYTRO, Dmytro Honcharenko, You, He, His) with \"ти\"/\"твій\"/\"тобі\" - Keep messages concise — no filler words - Preserve all emoji and formatting markers  OUTPUT FORMAT (strict JSON, no markdown fences, no preamble): {   \"output\": {     \"closeness_score\": \"<plain number string like '82', NOT '82/100'>\",     \"cover_letter\": \"<Ukrainian cover letter from first LLM, cleaned up. Empty string if score < 80>\",     \"slack_message\": \"<Slack message using *bold*. Must include ALL job metadata: title, company, location, score, salary, experience, applications, contract type, keyword match, and link>\",     \"telegram_message\": \"<Telegram message using <b>bold</b> and <a href=''>links</a>. Same structure and data as slack_message but with HTML tags>\",     \"relevance_overall\": <number>,     \"relevance_skills\": <number>,     \"relevance_experience\": <number>,     \"relevance_ats\": <number>,     \"improvement_actions\": [{\"action\": \"string in Ukrainian\", \"timeframe\": \"string\"}],     \"summary\": \"<CV summary in Ukrainian, max 2 sentences, use ти/твій>\"   } }  CRITICAL RULES: - closeness_score must be a PLAIN NUMBER like \"82\", NEVER \"82/100\" - improvement_actions must be a JSON ARRAY, NOT a stringified array - Do NOT invent data — only use what is provided in the inputs - Do NOT include cover_letter inside slack_message or telegram_message - Slack link format: [Переглянути вакансію](URL) - Telegram link format: <a href=\"URL\">Відкрити на LinkedIn</a>"
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        2288,
+        208
+      ],
+      "id": "078c3121-232b-4314-a36c-323485f67f79",
+      "name": "LLM: normalize message",
+      "retryOnFail": true,
+      "waitBetweenTries": 5000,
+      "executeOnce": false,
+      "maxTries": 2,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"closeness_score\": \"A plain number string like '82'\",\n  \"cover_letter\": \"Cover letter in Ukrainian or empty string\",\n  \"slack_message\": \"Full Slack message with all job metadata in Ukrainian\",\n  \"telegram_message\": \"Full Telegram message with HTML tags and all job metadata in Ukrainian\",\n  \"relevance_overall\": \"Number\",\n  \"relevance_skills\": \"Number\",\n  \"relevance_experience\": \"Number\",\n  \"relevance_ats\": \"Number\",\n  \"improvement_actions\": \"JSON array of objects with action and timeframe fields\",\n  \"summary\": \"Ukrainian summary, max 2 sentences\"\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        2448,
+        432
+      ],
+      "id": "a0cfa459-bc3f-4b9c-bedd-e2055b5e6f6c",
+      "name": "Structured Output Parser1"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.keywordMatchScorePercentage }}",
+                    "rightValue": 33,
+                    "operator": {
+                      "type": "number",
+                      "operation": "gte"
+                    },
+                    "id": "22550044-2dc6-4ac5-b41e-3d4927997a9f"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Match"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1248,
+        16
+      ],
+      "id": "87d16fc8-9ac7-47c1-91d4-70fb642a01fd",
+      "name": "Skip irrelevant"
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "subject:(React OR \"React Native\" OR \"Node.js\" OR \"Full Stack\" OR Frontend OR JavaScript OR TypeScript)",
+          "sender": "jobalerts-noreply@linkedin.com"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -480,
+        -192
+      ],
+      "id": "3c005869-35d6-40eb-96b0-390808607424",
+      "name": "Received LinkedIn Job Alert",
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "operation": "removeItemsSeenInPreviousExecutions",
+        "dedupeValue": "={{ $json.id }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.removeDuplicates",
+      "typeVersion": 2,
+      "position": [
+        -304,
+        -192
+      ],
+      "id": "6a2669aa-3dab-4143-8c75-c74d4d672b82",
+      "name": "Remove Duplicated Mails"
+    },
+    {
+      "parameters": {
+        "operation": "removeItemsSeenInPreviousExecutions",
+        "dedupeValue": "={{ $json.jobId }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.removeDuplicates",
+      "typeVersion": 2,
+      "position": [
+        128,
+        0
+      ],
+      "id": "72602821-c2f4-43f5-9898-ef391a44c337",
+      "name": "Remove Duplicates Jobs"
+    },
+    {
+      "parameters": {
+        "jsCode": "const text = $input.first().json.text || '';\n\n// Extract job IDs from LinkedIn URLs\nconst jobIdRegex = /linkedin\\.com\\/(?:comm\\/)?jobs\\/view\\/(\\d+)/g;\nconst seen = new Set();\nconst urls = [];\n\nlet match;\nwhile ((match = jobIdRegex.exec(text)) !== null) {\n  const jobId = match[1];\n  if (!seen.has(jobId)) {\n    seen.add(jobId);\n    urls.push(`https://www.linkedin.com/jobs/view/${jobId}`);\n  }\n}\n\nreturn [{ json: { directUrls: urls } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -128,
+        -192
+      ],
+      "id": "c553e90a-13d3-477c-b7da-9f26798328e2",
+      "name": "Parse Jobs URL"
+    },
+    {
+      "parameters": {
+        "operation": "Run actor and get dataset",
+        "actorSource": "store",
+        "actorId": {
+          "__rl": true,
+          "value": "HxVzxLvPwxYkc6ndm",
+          "mode": "id"
+        },
+        "customBody": "={{ JSON.stringify({\n  \"directUrls\": $json.directUrls,\n  \"includeJobDetails\": true,\n  \"maxResultsPerQuery\": 1\n}) }}",
+        "timeout": {},
+        "authentication": "apifyOAuth2Api"
+      },
+      "type": "@apify/n8n-nodes-apify.apify",
+      "typeVersion": 1,
+      "position": [
+        48,
+        -192
+      ],
+      "id": "13b18809-06e2-4b3b-b3bd-3f7415b0be2d",
+      "name": "Find Alerted LinkedIn Jobs",
+      "alwaysOutputData": true,
+      "credentials": {}
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1f19b4f8-d52f-4664-9028-d094211f382e",
+              "name": "jobId",
+              "value": "={{ String($json.id) }}",
+              "type": "string"
+            },
+            {
+              "id": "5e917767-cd06-47e5-b1db-a002c93e350f",
+              "name": "jobTitle",
+              "value": "={{ $json.title }}",
+              "type": "string"
+            },
+            {
+              "id": "7299ef33-d402-45c2-a593-ffdfbf025743",
+              "name": "location",
+              "value": "={{ $json.location }}",
+              "type": "string"
+            },
+            {
+              "id": "169216ea-4a5e-4198-a70a-0804ab7466c9",
+              "name": "salaryInfo",
+              "value": "={{ $json.salary_text ? [$json.salary_text] : [] }}",
+              "type": "string"
+            },
+            {
+              "id": "672ddb96-97e3-4638-849d-11d4c7171962",
+              "name": "postedTime",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "28f7d298-2b62-4b00-be2b-692274f067e2",
+              "name": "publishedAt",
+              "value": "={{ $json.posted_at }}",
+              "type": "string"
+            },
+            {
+              "id": "455ba128-1a4b-43fb-9132-3b30a40c72aa",
+              "name": "searchString",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "75131896-bd13-4793-9992-486d72c3955a",
+              "name": "jobUrl",
+              "value": "={{ $json.source_url }}",
+              "type": "string"
+            },
+            {
+              "id": "2ebcbadd-f6d0-411f-841b-cd8d96e1abc3",
+              "name": "companyName",
+              "value": "={{ $json.company }}",
+              "type": "string"
+            },
+            {
+              "id": "e61ba53d-b1d6-41cd-8d3d-fbbe6de9a59f",
+              "name": "companyUrl",
+              "value": "={{ $json.company_url }}",
+              "type": "string"
+            },
+            {
+              "id": "51da1287-18d5-4e6c-b01c-55503eeaf09f",
+              "name": "companyLogo",
+              "value": "={{ $json.company_logo_url }}",
+              "type": "string"
+            },
+            {
+              "id": "62c359d9-6976-462a-90b8-09a224ccbf00",
+              "name": "jobDescription",
+              "value": "={{ $json.description_full }}",
+              "type": "string"
+            },
+            {
+              "id": "2369d0da-d6e6-4bdc-b11b-cf7c04d5daa3",
+              "name": "=applicationsCount",
+              "value": "={{ $json.applicants ? $json.applicants + ' applicants' : '' }}",
+              "type": "string"
+            },
+            {
+              "id": "c4cf3d9f-a74d-4cb9-b2d7-fce10ea29dde",
+              "name": "contractType",
+              "value": "={{ $json.employment_type }}",
+              "type": "string"
+            },
+            {
+              "id": "d1293e42-57dc-4021-a1a4-d91d08a675ca",
+              "name": "experienceLevel",
+              "value": "={{ $json.seniority_level }}",
+              "type": "string"
+            },
+            {
+              "id": "21da2a71-cfce-4f22-9e4b-6989d65d9cfa",
+              "name": "yearsOfExperience",
+              "value": "={{ [] }}",
+              "type": "array"
+            },
+            {
+              "id": "dfaaf054-9162-4f93-b0fc-f311415ee78c",
+              "name": "workType",
+              "value": "={{ $json.job_function }}",
+              "type": "string"
+            },
+            {
+              "id": "f9f0bc98-ee79-416f-be13-357ccff1518f",
+              "name": "sector",
+              "value": "={{ $json.company_industry }}",
+              "type": "string"
+            },
+            {
+              "id": "abf262b6-af50-4541-beba-989ead69d1ea",
+              "name": "posterFullName",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "78bb3b86-14e3-4a98-9b6c-e3eec2e7aed0",
+              "name": "posterProfileUrl",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "4bd7a296-5a67-4114-9740-c58fb417dfb9",
+              "name": "companyId",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "71e0440d-db67-45ae-ba8a-5042523479e7",
+              "name": "applyUrl",
+              "value": "={{ $json.apply_url }}",
+              "type": "string"
+            },
+            {
+              "id": "c6cba18b-9fb2-40a2-a97d-0910e02ac912",
+              "name": "applyType",
+              "value": "EXTERNAL",
+              "type": "string"
+            },
+            {
+              "id": "b65e5e7c-ff0d-478c-84d2-c0f9eabcd171",
+              "name": "matchedKeywords",
+              "value": "={{ [] }}",
+              "type": "array"
+            },
+            {
+              "id": "7a612857-cc3b-471d-b3fc-17ec8c743027",
+              "name": "unmatchedKeywords",
+              "value": "={{ [] }}",
+              "type": "array"
+            },
+            {
+              "id": "dac76d1b-f013-436c-9517-78cfde51d6c1",
+              "name": "keywordMatchScorePercentage",
+              "value": 33,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        -192
+      ],
+      "id": "bf3fbe3f-b219-4065-bb59-d8d5631f4e0b",
+      "name": "Map Fields"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "LLM: calculate job relevance",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "LLM: calculate job relevance",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "If not the first iteration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a text message": {
+      "main": [
+        [
+          {
+            "node": "Finished successfully iteration",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "SMS Gateaway": {
+      "main": [
+        [
+          {
+            "node": "Find CV suggestions",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "5s delay": {
+      "main": [
+        [
+          {
+            "node": "Skip irrelevant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If not the first iteration": {
+      "main": [
+        [
+          {
+            "node": "5s delay",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip irrelevant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger every 4 hours": {
+      "main": [
+        [
+          {
+            "node": "Find LinkedIn Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find LinkedIn Jobs": {
+      "main": [
+        [
+          {
+            "node": "Remove Duplicates Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM: calculate job relevance": {
+      "main": [
+        [
+          {
+            "node": "SMS Gateaway",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Notification to Slack": {
+      "main": [
+        [
+          {
+            "node": "Finished successfully iteration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finished successfully iteration": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find CV suggestions": {
+      "main": [
+        [
+          {
+            "node": "LLM: normalize message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "LLM: normalize message",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser1": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "LLM: normalize message",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM: normalize message": {
+      "main": [
+        [
+          {
+            "node": "Send Notification to Slack",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip irrelevant": {
+      "main": [
+        [
+          {
+            "node": "LLM: calculate job relevance",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Received LinkedIn Job Alert": {
+      "main": [
+        [
+          {
+            "node": "Remove Duplicated Mails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Duplicates Jobs": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Remove Duplicated Mails": {
+      "main": [
+        [
+          {
+            "node": "Parse Jobs URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Jobs URL": {
+      "main": [
+        [
+          {
+            "node": "Find Alerted LinkedIn Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Alerted LinkedIn Jobs": {
+      "main": [
+        [
+          {
+            "node": "Map Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map Fields": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "91c0dcee-9ceb-469e-b4e4-10fd4d025e5b",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "fb62458742a9ea8ed58d3c793a7b8187dd8acb69e230d22f4a65683eef263d47"
+  },
+  "id": "63qT1YDKIY55ENTz",
+  "tags": []
+}
