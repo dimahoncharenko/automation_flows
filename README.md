@@ -260,6 +260,187 @@ subject:(React OR "React Native" OR "Node.js" OR "Full Stack" OR Frontend OR Jav
 
 Для зменшення витрат: зменшіть кількість ключових слів, збільшіть інтервал тригера, або використовуйте `publishedAt: "r43200"` (12 годин замість 24).
 
+<img width="1684" height="777" alt="image" src="https://github.com/user-attachments/assets/5a40f3c1-fd32-47e0-b4a8-859c4d3115c4" />
+
+
+# 📰 News Feed Automation
+
+Автоматизований n8n-воркфлоу, який щоранку збирає статті з RSS-стрічок, створює короткі українськомовні анотації за допомогою Google Gemini і публікує їх у Telegram-канал із зображеннями.
+
+---
+
+## Архітектура
+
+```
+┌───────────────┐      ┌───────────┐      ┌──────────┐       ┌─────────────┐
+   Schedule       ───▶   URL List   ───▶   Split Out   ───▶    RSS Read   
+   (10:00 AM)            (9 feeds)        └──────────┘       └──────┬──────┘                        
+└───────────────┘      └───────────┘                                |
+                                                                    │
+                    ┌───────────────────────────────────────────────┘
+                    ▼
+             ┌─────────────┐        ┌───────────┐        ┌──────────┐      ┌──────────────────┐
+               Filter fresh   ───▶    Randomize   ───▶    Limit 15   ───▶  Remove Duplicates
+               (this year)          └───────────┘        └───────────┘       (cross-execution)
+             └─────────────┘                                               └───────┬──────────┘
+                                                                                   │
+                    ┌──────────────────────────────────────────────────────────────┘
+                    ▼
+          ┌──────────────────┐      ┌──────────────────┐       ┌─────────────┐
+            Loop Over Items    ───▶     Wait 5s (rate    ───▶   Gemini 2.5  
+             (batch by 1)               limit between             Flash LLM   
+          └────────┬─────────┘           iterations)             (summarize) 
+                   |                └────────┬─────────┘       └──────┬──────┘
+                   ▲                                                  │
+                   │                                                  ▼
+          ┌────────┴─────────┐                                ┌──────────────┐
+             Send Photo       ◀─────────────────────────────     Map Images  
+             to Telegram                                         (fallbacks) 
+          └──────────────────┘                                └──────────────┘
+```
+
+---
+
+## Що робить воркфлоу
+
+1. **Тригер за розкладом** — запускається щодня о 10:00.
+2. **Збір RSS** — обходить 9 RSS-стрічок (tech, AI, українські медіа).
+3. **Фільтрація** — залишає лише статті поточного року.
+4. **Рандомізація + ліміт** — перемішує та обрізає до 15 статей.
+5. **Дедуплікація** — прибирає статті, які вже надсилались у попередніх запусках (за ключем `creator + link`).
+6. **LLM-саммарі** — Gemini 2.5 Flash генерує коротку анотацію українською (до 1024 символів, Telegram HTML).
+7. **Підбір зображення** — бере `enclosure.url` зі статті або підставляє фолбек-логотип за доменом.
+8. **Публікація** — надсилає фото з підписом у Telegram-чат.
+9. **Rate limiting** — між ітераціями 5-секундна пауза, щоб не потрапити в ліміти API.
+
+---
+
+## RSS-джерела
+
+| Джерело | URL |
+|---------|-----|
+| Hacker News (frontpage) | `https://hnrss.org/frontpage` |
+| DEV.to | `https://dev.to/feed/` |
+| OpenAI Blog | `https://openai.com/news/rss.xml` |
+| Google DeepMind Blog | `https://deepmind.google/blog/rss.xml` |
+| CSS-Tricks | `https://css-tricks.com/feed/` |
+| AIN.UA | `https://ain.ua/feed/` |
+| ITPro | `https://www.itpro.com/feeds.xml` |
+| ITC.UA | `https://itc.ua/ua/feed/` |
+| УНІАН | `https://rss.unian.net/site/news_ukr.rss` |
+
+---
+
+## Вимоги
+
+- **n8n** — self-hosted або n8n Cloud
+- **Google Gemini API** — ключ для моделі `gemini-2.5-flash`
+- **Telegram Bot** — токен бота + ID чату для публікації
+
+---
+
+## Налаштування
+
+### 1. Імпорт воркфлоу
+
+1. Відкрийте n8n → **Workflows** → **Import from File**.
+2. Завантажте JSON-файл воркфлоу.
+
+### 2. Credentials
+
+Потрібно створити два credentials у n8n:
+
+**Google Gemini:**
+- Перейдіть до **Settings** → **Credentials** → **New Credential**.
+- Тип: `Google Gemini Chat Model`.
+- Вставте ваш API-ключ Google AI Studio.
+
+**Telegram Bot:**
+- Тип: `Telegram API`.
+- Вставте токен бота (отримайте через [@BotFather](https://t.me/BotFather)).
+
+### 3. Налаштування чату Telegram
+
+У ноді **"Send a post to TG"** замініть `chatId` на ID вашого каналу або чату
+
+### 4. Кастомізація джерел
+
+Відредагуйте масив URL-адрес у ноді **"Url sources"**. Додайте або видаліть RSS-стрічки за потреби.
+
+### 5. Активація
+
+Увімкніть воркфлоу тумблером — він запускатиметься автоматично щодня о 10:00.
+
+---
+
+## Структура нод
+
+| Нода | Тип | Призначення |
+|------|-----|-------------|
+| Call every morning (10AM) | Schedule Trigger | Щоденний запуск |
+| Url sources | Set | Масив RSS-стрічок |
+| Split Out | Split Out | Розгортає масив в окремі items |
+| RSS Read | RSS Feed Read | Зчитує статті з кожного RSS |
+| Pick fresh posts | Filter | Фільтрує за поточним роком |
+| Randomize | Sort (random) | Перемішує статті |
+| Limit to 15 | Limit | Обмежує кількість |
+| Remove Duplicates | Remove Duplicates | Виключає раніше надіслані |
+| Loop Over Items | Split In Batches | Обробка по одній статті |
+| If not the first iteration | If | Пропускає паузу для першої |
+| Wait 5 seconds | Wait | Пауза між публікаціями |
+| LLM: process a post | Chain LLM | Генерація анотації (Gemini) |
+| Google Gemini Chat Model | LM Chat | Модель для LLM-ноди |
+| Map images | Code | Вибір зображення або фолбеку |
+| Send a post to TG | Telegram | Публікація в Telegram |
+
+---
+
+## Формат повідомлення у Telegram
+
+Кожна публікація надсилається як фото з HTML-підписом:
+
+```
+<b>Заголовок статті</b>
+
+<i>Автор:</i> Ім'я
+<i>Дата:</i> 17.05.2026
+<i>Категорія:</i> AI, Machine Learning
+
+Коротка анотація українською — 2-3 речення
+про що стаття та чому може бути корисна.
+
+<a href="https://...">Читати повністю</a>
+```
+
+---
+
+## Фолбек-зображення
+
+Якщо стаття не містить `enclosure.url`, підставляється логотип джерела:
+
+| Домен | Фолбек |
+|-------|--------|
+| openai.com | Логотип OpenAI |
+| deepmind.google | Логотип DeepMind |
+| ain.ua | Логотип AIN |
+| itc.ua | Логотип ITC |
+| dev.to | Логотип DEV |
+| css-tricks.com | Логотип CSS-Tricks |
+| itpro.com | Логотип ITPro |
+| unian.net | Логотип УНІАН |
+| (інше) | Стокова картинка новин |
+
+---
+
+## Можливі проблеми
+
+- **RSS недоступний** — нода RSS Read має `onError: continueRegularOutput`, тому один збій не зупиняє весь воркфлоу.
+- **Gemini rate limit** — 5-секундна пауза між ітераціями мінімізує ризик, але при великій кількості публікацій збільшіть паузу.
+- **Telegram rate limit** — Telegram обмежує ботів до ~30 повідомлень на секунду; 15 повідомлень з паузами не повинні викликати проблем.
+- **Фолбек-зображення недоступне** — замініть URL у ноді "Map images" на альтернативне.
+
+---
+
 ## Ліцензія
 
 MIT — використовуйте, модифікуйте, діліться вільно.
