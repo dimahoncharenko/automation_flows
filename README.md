@@ -262,7 +262,6 @@ subject:(React OR "React Native" OR "Node.js" OR "Full Stack" OR Frontend OR Jav
 
 <img width="1684" height="777" alt="image" src="https://github.com/user-attachments/assets/5a40f3c1-fd32-47e0-b4a8-859c4d3115c4" />
 
-
 # 📰 News Feed Automation
 
 Автоматизований n8n-воркфлоу, який щоранку збирає статті з RSS-стрічок, створює короткі українськомовні анотації за допомогою Google Gemini і публікує їх у Telegram-канал із зображеннями.
@@ -438,6 +437,210 @@ subject:(React OR "React Native" OR "Node.js" OR "Full Stack" OR Frontend OR Jav
 - **Gemini rate limit** — 5-секундна пауза між ітераціями мінімізує ризик, але при великій кількості публікацій збільшіть паузу.
 - **Telegram rate limit** — Telegram обмежує ботів до ~30 повідомлень на секунду; 15 повідомлень з паузами не повинні викликати проблем.
 - **Фолбек-зображення недоступне** — замініть URL у ноді "Map images" на альтернативне.
+
+---
+
+<img width="1684" height="778" alt="image" src="https://github.com/user-attachments/assets/a5834121-9ed7-465e-be1f-bc896c47a50c" />
+
+# 🛒 AliExpress Scraper via Apify
+
+Автоматизований n8n-воркфлоу, який щотижня скрапить товари з AliExpress через Apify, нормалізує дані та публікує картки товарів у Telegram із цінами, знижками та рейтингами.
+
+---
+
+## Архітектура
+
+```
+┌────────────────┐      ┌─────────────────────┐
+ Schedule Trigger  ───▶       Apify Actor         
+   (Sat 12:00)            (AliExpress Scraper) 
+└────────────────┘      └──────────┬───────────┘
+                                   │
+                       ┌───────────┴───────┐
+                       │                   │
+                    success              error
+                       │                   │
+                       ▼                   ▼
+              ┌─────────────────┐  ┌──────────────────┐
+               Remove Duplicates     Send error alert  
+                 (by productId)        to Telegram       
+              └────────┬────────┘  └──────────────────┘
+                       │
+                       ▼
+              ┌─────────────────┐
+                 Normalize Data  
+                  (Code node)     
+              └────────┬────────┘
+                       │
+                       ▼
+              ┌─────────────────┐
+                Send photo msg   
+                  to Telegram      
+              └─────────────────┘
+```
+
+---
+
+## Що робить воркфлоу
+
+1. **Тригер за розкладом** — запускається щосуботи о 12:00.
+2. **Скрапінг** — Apify actor `mfblss3fLQRaqhg6K` шукає товари за запитами (`fpv`, `graphic cards`, `LiPo`, `vtx`), сортуючи за рейтингом, до 10 товарів на запит.
+3. **Обробка помилок** — якщо актор впав після 3 ретраїв, у Telegram надсилається алерт з деталями помилки.
+4. **Дедуплікація** — видаляє дублікати за `productId`.
+5. **Нормалізація** — Code-нода трансформує сирі дані Apify в чистий формат: ціна, знижка, рейтинг, зображення, купони тощо.
+6. **Публікація** — кожен товар надсилається у Telegram як фото з HTML-підписом.
+
+---
+
+## Пошукові запити
+
+За замовчуванням воркфлоу шукає:
+
+| Запит | Опис |
+|-------|------|
+| `fpv` | FPV-дрони та комплектуючі |
+| `graphic cards` | Відеокарти |
+| `LiPo` | LiPo-акумулятори |
+| `vtx` | Відеопередавачі для FPV |
+
+Щоб змінити запити, відредагуйте масив `queries` у ноді **"Run an Actor and get dataset"**.
+
+---
+
+## Вимоги
+
+- **n8n** — self-hosted або n8n Cloud
+- **Apify** — акаунт + OAuth2 credentials (або API-токен)
+- **Telegram Bot** — токен бота + ID чату
+
+---
+
+## Налаштування
+
+### 1. Імпорт воркфлоу
+
+1. Відкрийте n8n → **Workflows** → **Import from File**.
+2. Завантажте JSON-файл воркфлоу.
+
+### 2. Credentials
+
+**Apify:**
+- Перейдіть до **Settings** → **Credentials** → **New Credential**.
+- Тип: `Apify OAuth2 API`.
+- Авторизуйтесь через Apify або вставте API-токен з [Apify Console](https://console.apify.com/account#/integrations).
+
+**Telegram Bot:**
+- Тип: `Telegram API`.
+- Вставте токен бота (отримайте через [@BotFather](https://t.me/BotFather)).
+
+### 3. Налаштування Telegram Chat ID
+
+Заповніть `chatId` у двох нодах:
+
+- **"Send a photo message"** — основні публікації товарів.
+- **"Send an error message"** — алерти про помилки.
+
+Щоб дізнатися ID:
+- Надішліть повідомлення боту.
+- Зробіть запит: `https://api.telegram.org/bot<TOKEN>/getUpdates`.
+- Знайдіть `chat.id` у відповіді.
+
+### 4. Налаштування пошуку
+
+У ноді **"Run an Actor and get dataset"** відредагуйте `customBody`:
+
+```json
+{
+  "deduplicateProducts": true,
+  "includeDescription": true,
+  "includeQuestions": false,
+  "includeReviews": false,
+  "includeShippingDetails": false,
+  "includeVariants": false,
+  "maxItems": 10,
+  "queries": ["fpv", "graphic cards", "LiPo", "vtx"],
+  "sortBy": "rating"
+}
+```
+
+| Параметр | Опис |
+|----------|------|
+| `maxItems` | Макс. кількість товарів на запит |
+| `queries` | Масив пошукових запитів |
+| `sortBy` | Сортування: `rating`, `price`, `orders` |
+| `includeDescription` | Включити опис товару |
+| `includeReviews` | Включити відгуки (збільшує час) |
+
+### 5. Активація
+
+Увімкніть воркфлоу — він запуститься автоматично щосуботи о 12:00.
+
+---
+
+## Структура нод
+
+| Нода | Тип | Призначення |
+|------|-----|-------------|
+| Schedule Trigger | Schedule Trigger | Щотижневий запуск (субота, 12:00) |
+| Run an Actor and get dataset | Apify | Запуск скрапера AliExpress |
+| Remove Duplicates | Remove Duplicates | Дедуплікація за `productId` |
+| Normalize Data | Code | Трансформація в чистий формат |
+| Send a photo message | Telegram | Публікація картки товару |
+| Send an error message | Telegram | Алерт про помилку скрапера |
+
+---
+
+## Формат повідомлення у Telegram
+
+Кожен товар надсилається як фото з підписом:
+
+```
+Назва товару
+
+💰 $12.99  $29.99  (-57%)
+⭐ 4.8  •  📦 1,234 sold
+🏷️ $2 off every $20
+
+🔗 View on AliExpress
+```
+
+---
+
+## Нормалізовані поля
+
+Code-нода `Normalize Data` витягує наступні поля:
+
+| Поле | Джерело | Фолбек |
+|------|---------|--------|
+| `productId` | `d.productId` | `''` |
+| `title` | `d.title.displayTitle` | `''` |
+| `currentPrice` | `d.prices.salePrice.minPrice` | `d.extractedData.currentPrice` |
+| `originalPrice` | `d.prices.originalPrice.minPrice` | `d.extractedData.originalPrice` |
+| `discount` | `d.extractedData.discountPercent` | `d.prices.salePrice.discount` |
+| `rating` | `d.evaluation.starRating` | `d.extractedData.rating` |
+| `totalOrders` | `d.extractedData.totalOrders` | `0` |
+| `imageUrl` | `d.image.imgUrl` | `d.images[0].imgUrl` |
+| `storeName` | `d.store.storeName` | `''` |
+| `coupons` | `d.sellingPoints[].tagContent.tagText` | `''` |
+
+> Якщо Apify змінить схему відповіді, адаптуйте маппінг у цій ноді.
+
+---
+
+## Обробка помилок
+
+- **Retry policy** — нода Apify автоматично ретраїть до 3 разів із паузою 2 секунди.
+- **Error output** — при фінальному фейлі дані йдуть у другий вихід → алерт у Telegram з текстом помилки та посиланням на Apify Console.
+- **Продовження при помилках** — `onError: continueErrorOutput` дозволяє обробити помилку замість зупинки воркфлоу.
+
+---
+
+## Можливі проблеми
+
+- **Apify credits** — скрапінг витрачає кредити Apify; слідкуйте за балансом.
+- **Зміна схеми актора** — якщо автор актора оновить формат, поправте маппінг у `Normalize Data`.
+- **AliExpress блокування** — актор може повертати менше результатів при агресивному скрапінгу; зменшіть `maxItems` або збільшіть інтервал.
+- **Порожній `chatId`** — не забудьте заповнити ID чату в обох Telegram-нодах.
 
 ---
 
