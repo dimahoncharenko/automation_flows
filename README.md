@@ -1,264 +1,384 @@
-<img width="1682" height="779" alt="image" src="https://github.com/user-attachments/assets/0eeba4ef-aa5e-4d54-94b0-9776389bed0b" />
+<img width="1850" height="733" alt="image" src="https://github.com/user-attachments/assets/94b67421-99c8-4f6c-99e8-8b60ec1add2c" />
 
-# 🎯 Job Detector — Автоматизований пошук вакансій на LinkedIn
+# 🎯 Job Detector — Automated LinkedIn Job Search with AI-Powered CV Generation
 
-Автоматизований n8n workflow для пошуку, аналізу та оцінки вакансій на LinkedIn з відправкою персоналізованих сповіщень у Telegram та Slack.
+An automated n8n workflow that searches, analyzes, and scores LinkedIn vacancies, sends personalized notifications to Telegram, and generates tailored PDF resumes for each high-scoring job — all with an interactive Telegram bot for on-the-fly CV customization.
 
-## Зміст
+## Table of Contents
 
-- [Як це працює](#як-це-працює)
-- [Архітектура](#архітектура)
-- [Можливості](#можливості)
-- [Встановлення](#встановлення)
-- [Налаштування облікових даних](#налаштування-облікових-даних)
-- [Конфігурація під себе](#конфігурація-під-себе)
-- [Вартість](#вартість)
+- [How It Works](#how-it-works)
+- [Architecture](#architecture)
+- [Features](#features)
+- [Installation](#installation)
+- [Credentials Setup](#credentials-setup)
+- [Configuration](#configuration)
+- [CV Themes](#cv-themes)
+- [Telegram Bot Commands](#telegram-bot-commands)
+- [Cost Breakdown](#cost-breakdown)
+- [Limitations](#limitations)
+- [Strengths](#strengths)
 
-## Як це працює
+## How It Works
 
-Workflow працює у двох режимах паралельно:
+The workflow runs in three parallel modes:
 
-**Режим 1 — Планове сканування (кожні 4 години):** скрапить LinkedIn за заданими ключовими словами та локацією, фільтрує дублікати, оцінює кожну вакансію через LLM, аналізує відповідність резюме та надсилає результати у Telegram і Slack.
+**Mode 1 — Scheduled Scan (every 4 hours):** Scrapes LinkedIn for jobs matching configured keywords and location, filters duplicates, scores each vacancy via LLM, analyzes resume fit, generates a tailored PDF resume, and sends everything to Telegram.
 
-**Режим 2 — Gmail-тригер (реального часу):** перехоплює email-сповіщення LinkedIn Job Alerts, витягує URL вакансій, скрапить їх деталі через окремий Apify актор, приводить до єдиного формату та подає в основний потік обробки.
+**Mode 2 — Gmail Trigger (every 30 minutes):** Polls for unread LinkedIn Job Alert emails, extracts job URLs, scrapes job details via a separate Apify actor, normalizes the data into a unified format, and feeds it into the same processing pipeline.
 
-## Архітектура
+**Mode 3 — Telegram Bot (real-time):** Listens for callback actions from Telegram inline buttons. Allows the user to regenerate a CV with a custom prompt, change the CV theme, or adjust the PDF scale — all from within the Telegram chat.
 
+All three modes converge at a centralized **Configuration** node that holds every tunable parameter: CV data, search criteria, thresholds, templates, and PDF options.
+
+## Architecture
+
+```mermaid
+flowchart TD
+    subgraph SOURCES
+        A["⏰ Cron (every 4h)"]
+        B["📧 Gmail (30min poll)"]
+        C["🤖 TG Bot Trigger"]
+    end
+
+    A --> SA["Set source=cron"]
+    B --> SB["Set source=gmail"]
+    C --> SC["Set source=tg"]
+
+    SA & SB & SC --> CFG["⚙️ Configuration\n(CV, thresholds, search params)"]
+    CFG --> VALID{"Config valid?"}
+    VALID -->|No| STOP["⛔ Stop"]
+    VALID -->|Yes| ROUTER{"General Router"}
+
+    ROUTER -->|source=cron| FIND["🔍 Find LinkedIn Jobs\n(Apify keyword search)"]
+    ROUTER -->|source=gmail| PARSE["📝 Parse Job URLs\nfrom email"]
+    ROUTER -->|source=tg| REGEN["🔄 Parse Regen Action"]
+
+    PARSE --> ALERT["🔍 Find Alerted LinkedIn Jobs\n(Apify URL scraper)"]
+    ALERT --> NORM["🔄 Normalize Fields"]
+
+    FIND & NORM --> DEDUP["🔒 Remove Duplicates (jobId)"]
+    DEDUP --> FILTER["🗑️ Filter expired/closed/broken"]
+
+    REGEN --> REGROUTER{"Regen Router"}
+    REGROUTER -->|Theme| THEME["🎨 Change Theme"]
+    REGROUTER -->|Scale| SCALE["📐 Change Scale"]
+    REGROUTER -->|Prompt| PROMPT["✏️ Regenerate with Prompt"]
+
+    subgraph JOB_PROCESSING ["JOB PROCESSING"]
+        FILTER --> LOOP["🔁 Iterate vacancy (batch)"]
+        LOOP --> DELAY["⏳ 5s delay"]
+        DELAY --> KWCHECK{"Keyword match\n≥ threshold?"}
+        KWCHECK -->|No| LOOP
+        KWCHECK -->|Yes| LLM1["🤖 LLM: calculate job relevance\n(score 0-100, cover letter, TG message)"]
+        LLM1 --> GATE{"Score ≥ threshold?"}
+        GATE -->|No| LOOP
+        GATE -->|Yes| CVSUG["📊 Find CV suggestions (LLM)"]
+        CVSUG --> IMPROVE["🤖 LLM: improve resume fields"]
+        IMPROVE --> NORMMSG["🤖 LLM: normalize message → Ukrainian"]
+        NORMMSG --> BUILD["🏗️ Build themed HTML CV"]
+        BUILD --> PDF["📄 Convert to PDF (pdfspark.dev)"]
+        PDF --> UPSERT["💾 Upsert CV to Data Table"]
+    end
+
+    subgraph DELIVERY
+        UPSERT --> TG_MSG["📱 Telegram: job summary (HTML)"]
+        TG_MSG --> TG_DOC["📄 Telegram: tailored PDF resume"]
+        TG_DOC --> BUTTONS["Inline buttons:\n✏️ Перегенерувати | 📐 Масштаб\n🎨 Тема | 🔄 Тема за замовч."]
+        BUTTONS --> DONE["✅ Finished → next vacancy"]
+        DONE --> LOOP
+    end
 ```
-                                ┌─────────────────────────────────────────────────────────────────────┐
-                                                                                      ДЖЕРЕЛА ВАКАНСІЙ                             
-                                                                                      
-                                ⏰ Trigger every 4h                        📧 Gmail Trigger 
-                                        |                                      (realtime)           
-                                        │                                          │                                 
-                                        ▼                                          ▼                                 
-                                🔍 Find LinkedIn Jobs                   🔒 Remove Duplicated Mails               
-                                (Apify: keyword search)                            │                                   
-                                        │                                          ▼                                   
-                                        │                                 📝 Parse Jobs URL                         
-                                        │                                (Code: extract job IDs)                   
-                                        │                                          │                                   
-                                        │                                          ▼                                   
-                                        │                              🔍 Find Alerted LinkedIn Jobs             
-                                        │                                  (Apify: URL scraper)                      
-                                        │                                          │                                   
-                                        │                                          ▼                                   
-                                        │                                   🔄 Map Fields                             
-                                        │                               (нормалізація формату)                    
-                                        │                                          │                                   
-                                        └───────────────────|──────────────────────┘                                  
-                                                            │                                                 
-                                                            ▼                                                 
-                                              🔒 Remove Duplicate Jobs (по jobId)                          
-                                                            │                                                
-                                                            |
-                                ├───────────────────────────|─────────────────────────────────────────┤
-                                                            ▼                         ОБРОБКА ВАКАНСІЇ                         
-                                                    🔁 Loop Over Items                                        
-                                                            │                                                
-                                                ⏳ 5s delay (rate limiting)                               
-                                                            │                                                
-                                                    🔀 Skip irrelevant                                       
-                                            (keywordMatch < 33% → пропустити)                         
-                                                            │                                                
-                                                            ▼                                                
-                                                    🤖 LLM: calculate job relevance                          
-                                             (Gemini Flash — оцінка 0-100, cover letter,               
-                                                     Telegram/Slack повідомлення)                             
-                                                            |                                                
-                                               🔀 SMS Gateway (score ≥ 80)                             
-                                                    ├── ❌ score < 80 → наступна вакансія                    
-                                                    └── ✅ score ≥ 80 ↓                                      
-                                                            |                                               
-                                                 📊 Find CV suggestions                                   
-                                             (Apify: аналіз резюме vs вакансія)                        
-                                                            |                                                
-                                                    🤖 LLM: normalize message                                
-                                           (Gemini Flash — переклад, нормалізація,                   
-                                                  об'єднання всіх даних)                                   
-                                                            |                                                
-                                ├───────────────────────────|─────────────────────────────────────────┤
-                                                            ▼                    ДОСТАВКА ПОВІДОМЛЕННЯ                           
-                                                    ┌───────┴────────┐                                       
-                                                    ▼                ▼                                        
-                                                  Slack           Telegram                                  
-                                               (Markdown)          (HTML)                                       
-                                                    │                │                                        
-                                                    └───────┬────────┘                                        
-                                                            ▼                                                 
-                                              ✅ Finished iteration → наступна вакансія                 
-                                └─────────────────────────────────────────────────────────────────────┘
-```
 
-## Можливості
+## Features
 
-**Пошук та збір:**
-- Автоматичний пошук за 6 ключовими словами (React Native, Full Stack, Node.js, JavaScript, TypeScript, Front End)
-- Gmail-тригер для миттєвої обробки LinkedIn Job Alert листів
-- Дедуплікація вакансій між запусками (пам'ятає оброблені jobId)
-- Дедуплікація email-листів (не обробляє один лист двічі)
-- Keyword matching — автоматичне порівняння стеку вакансії з вашим профілем
+**Search & Collection:**
+- Automated search across customizable keywords (configured in the Configuration node)
+- Gmail polling for instant processing of LinkedIn Job Alert emails (every 30 min)
+- Deduplication of jobs between runs (remembers processed jobIds)
+- Deduplication of email messages (marks as read after processing)
+- Keyword matching — automatic comparison of job stack vs your resume keywords
+- Filters out expired, closed, offline, and paused job listings
+- Filters out broken listings with no description
 
-**AI-аналіз:**
-- Оцінка релевантності вакансії від 0 до 100 через LLM
-- Генерація персоналізованого супровідного листа українською (для score ≥ 80)
-- Аналіз резюме — прогалини навичок, ATS-сумісність, рекомендації
-- Переклад та нормалізація всіх повідомлень українською
+**AI Analysis:**
+- Job relevance scoring from 0 to 100 via LLM (Gemini Flash)
+- Personalized cover letter generation in Ukrainian (for score ≥ 85)
+- Resume gap analysis — skill gaps, ATS compatibility, improvement actions
+- LLM-driven resume improvement — rephrases experience bullets to include ATS keywords
+- Translation and normalization of all messages to Ukrainian
 
-**Сповіщення:**
-- Telegram — HTML-формат із клікабельними посиланнями
-- Slack — Markdown-формат для командного каналу
-- Включає: позицію, компанію, зарплату, досвід, кількість заявок, збіг стеку, аналіз резюме, дії для покращення
+**CV Generation:**
+- Automatic tailored PDF resume for each qualifying job
+- 11 themed HTML→PDF templates (Classic, Anthropic, Gemini, ChatGPT, DeepSeek, Grok, Perplexity, VSCode, React, Behance, Figma)
+- Locked/modifiable field split — name, contact, education stay fixed; headline, summary, experience, skills are optimized per job
+- CV storage in n8n Data Table for later regeneration
+- PDF conversion via pdfspark.dev API with configurable A4 options
 
-**Фільтрація:**
-- Пре-фільтр по keyword match (< 33% → пропускається без LLM-виклику, економить токени)
-- Score-based фільтр (< 80 → без CV-аналізу та сповіщень)
+**Telegram Bot:**
+- HTML-formatted job notifications with clickable links
+- PDF resume attached to each notification
+- Inline buttons: Regenerate (with custom prompt), Scale, Theme, Default Theme
+- Interactive conversation flow: the bot asks for input, waits, and applies changes
+- Regenerated CVs are re-sent as new PDF documents
 
-## Встановлення
+**Filtering:**
+- Pre-filter by keyword match (configurable threshold, default < 33% → skipped without LLM call, saves tokens)
+- Score-based filter (configurable threshold, default < 85 → no CV analysis or notification)
+- Status-based filter (expired/closed/offline/paused → skipped)
 
-**Передумови:**
-- n8n інстанс (self-hosted або n8n cloud)
-- Акаунти: Apify, Google Cloud (Gemini API), Telegram Bot, Slack App, Gmail
+## Installation
 
-**Імпорт workflow:**
+**Prerequisites:**
+- n8n instance (self-hosted or n8n cloud)
+- Accounts: Apify, Google Cloud (Gemini API), Telegram Bot
+- Gmail account with LinkedIn Job Alerts configured
+- An n8n Data Table named `cv_store` with columns: `label`, `htmlContent`, `resumeJson`, `company`, `theme`
 
-1. Скопіюйте файл `job_detector.json` з цього репозиторію
-2. У n8n перейдіть до **Settings → Import from File**
-3. Виберіть файл `job_detector.json`
-4. Workflow з'явиться у вашому списку як "Job Detector"
+**Import the workflow:**
 
-Або через CLI:
+1. Download `Job_Detector__23_.json` from this repository
+2. In n8n, go to **Settings → Import from File**
+3. Select the JSON file
+4. The workflow will appear as "Job Detector"
+
+Or via CLI:
 ```bash
-# Якщо використовуєте n8n CLI
 n8n import:workflow --input=job_detector.json
 ```
 
-## Налаштування облікових даних
+**Post-import steps:**
 
-Після імпорту потрібно налаштувати credentials для кожного сервісу. Відкрийте workflow і пройдіть по нодах з помаранчевим індикатором (відсутні credentials).
+1. Open the workflow and configure credentials for all nodes with an orange indicator
+2. Open the **Configuration** node and replace all personal data (CV, chat ID, search criteria)
+3. Create the `cv_store` Data Table in your n8n project and link it in the **Upsert CV's content** node
+
+## Credentials Setup
+
+After import, configure credentials for each service. Open the workflow and check nodes with the orange missing-credentials indicator.
 
 ### 1. Apify OAuth2 API
 
-Використовується у 3 нодах: **Find LinkedIn Jobs**, **Find Alerted LinkedIn Jobs**, **Find CV suggestions**.
+Used in 2 nodes: **Find LinkedIn Jobs**, **Find Alerted LinkedIn Jobs**.
 
-1. Зареєструйтесь на [apify.com](https://apify.com)
-2. Перейдіть до **Settings → Integrations → API tokens**
-3. Створіть новий токен
-4. У n8n: **Credentials → New → Apify OAuth2 API** → вставте токен
+1. Register at [apify.com](https://apify.com)
+2. Go to **Settings → Integrations → API tokens**
+3. Create a new token
+4. In n8n: **Credentials → New → Apify OAuth2 API** → paste the token
 
-**Apify актори, що використовуються:**
-- `2rJKkhh7vjpX7pvjg` — LinkedIn Jobs Scraper (пошук вакансій по ключовим словам, є пошук і по URL, але він погано працює)
-- `HxVzxLvPwxYkc6ndm` — LinkedIn Jobs Scraper - Professional Job Listings (отримати деталі вакансій пошук по URL)
-- `dylMGHNi91mnRsuqB` — AI Resume Gap Analyzer (оцінити match вакансії та резюме)
+**Apify actors used:**
+- `2rJKkhh7vjpX7pvjg` — LinkedIn Jobs Scraper (keyword-based search)
+- `HxVzxLvPwxYkc6ndm` — LinkedIn Jobs Scraper - Professional Job Listings (URL-based detail scraping)
 
 ### 2. Google Gemini (LLM)
 
-Використовується у 2 нодах: **Google Gemini Chat Model**, **Google Gemini Chat Model1**.
+Used in 4+ Gemini model nodes throughout the workflow.
 
-1. Перейдіть до [Google AI Studio](https://aistudio.google.com/apikey)
-2. Створіть API key
-3. У n8n: **Credentials → New → Google Gemini API** → вставте ключ
-4. Модель: `gemini-3.1-flash-lite` (швидка та дешева, але за бажанням можна обрати іншу)
+1. Go to [Google AI Studio](https://aistudio.google.com/apikey)
+2. Create an API key
+3. In n8n: **Credentials → New → Google Gemini API** → paste the key
+4. Default model: `gemini-3.1-flash-lite` (fast and cheap, but you can choose another)
 
 ### 3. Telegram Bot
 
-Використовується у ноді **Send a text message**.
+Used in multiple nodes: **Send a text message**, **Send a document to TG**, **TG: Regen Trigger**, and all interactive prompt/response nodes.
 
-1. Напишіть [@BotFather](https://t.me/BotFather) у Telegram
-2. Створіть нового бота: `/newbot`
-3. Скопіюйте токен бота
-4. Дізнайтесь свій Chat ID — напишіть [@userinfobot](https://t.me/userinfobot)
-5. У n8n: **Credentials → New → Telegram API** → вставте токен
-6. У ноді **Send a text message** замініть `chatId` на свій
+1. Message [@BotFather](https://t.me/BotFather) in Telegram
+2. Create a new bot: `/newbot`
+3. Copy the bot token
+4. Find your Chat ID — message [@userinfobot](https://t.me/userinfobot)
+5. In n8n: **Credentials → New → Telegram API** → paste the token
+6. In the **Configuration** node, set `tg_chat_id` to your Chat ID
 
-### 4. Slack
+### 4. Gmail OAuth2
 
-Використовується у ноді **Send Notification to Slack**.
+Used in nodes: **Get many messages**, **Mark a message as read**.
 
-1. Створіть Slack App на [api.slack.com/apps](https://api.slack.com/apps)
-2. Додайте OAuth Scope: `chat:write`, `chat:write.public`
-3. Встановіть App у свій workspace
-4. Скопіюйте Bot User OAuth Token
-5. У n8n: **Credentials → New → Slack OAuth2 API** → авторизуйтесь
-6. У ноді замініть канал `automation-alerts` на свій
+1. Create OAuth2 credentials in [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+2. Enable the Gmail API
+3. In n8n: **Credentials → New → Gmail OAuth2 API** → complete the OAuth flow
+4. Make sure you have LinkedIn Job Alerts enabled and arriving in your inbox
 
-### 5. Gmail OAuth2
+### 5. PDF Service
 
-Використовується у ноді **Received LinkedIn Job Alert**.
+The workflow uses `https://pdfspark.dev/api/v1/pdf/from-html` for HTML→PDF conversion. This is called via HTTP Request nodes (**Make a PDF**, **Rescale: Make PDF**). Check if pdfspark.dev requires an API key and configure it in the HTTP Request node headers if needed.
 
-1. Створіть OAuth2 credentials у [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
-2. Увімкніть Gmail API
-3. У n8n: **Credentials → New → Gmail OAuth2 API** → пройдіть OAuth flow
-4. Переконайтесь, що у вас є LinkedIn Job Alerts на пошті
+## Configuration
 
-## Конфігурація під себе
+All settings live in the **Configuration** node — a single Set node with a JSON object. Open it and customize:
 
-### Ключові слова пошуку
+### Telegram Chat ID
 
-У ноді **Find LinkedIn Jobs** → `customBody` → масив `keyword`:
 ```json
-"keyword": [
+"tg_chat_id": 123456789
+```
+Replace with your own Chat ID.
+
+### Score Threshold
+
+```json
+"score_threshold": 85
+```
+Minimum LLM relevance score for a job to trigger CV analysis and notification. Jobs scoring below this are silently skipped.
+
+### Keyword Match Threshold
+
+```json
+"keyword_match_threshold": 33
+```
+Minimum keyword match percentage for a job to be sent to the LLM at all. Jobs below this threshold are skipped without consuming LLM tokens.
+
+### Search Keywords
+
+```json
+"linkedin_job_search_criterias": {
+  "keyword": [
     "React Native",
     "Full Stack",
     "Node.js",
     "JavaScript",
     "TypeScript",
     "Front End"
-]
-```
-
-### Локація
-
-Там же, поле `location`:
-```json
-"location": "Kyiv, Ukraine"
-```
-
-### Resume Keywords (для keyword matching)
-
-Масив `resumeKeywords` у тому ж ноді — додайте свої ключові навички:
-```json
-"resumeKeywords": [
+  ],
+  "location": "Kyiv, Ukraine",
+  "maxItems": 150,
+  "publishedAt": "r86400",
+  "resumeKeywords": [
     { "keyword": "JavaScript", "aliases": ["JS"] },
     { "keyword": "TypeScript", "aliases": ["TS"] },
-    { "keyword": "Python" }
-]
+    { "keyword": "Node.js", "aliases": ["Node", "NodeJS"] },
+    { "keyword": "React Native", "aliases": ["RN"] },
+    { "keyword": "React" },
+    { "keyword": "Expo" }
+  ],
+  "saveOnlyUniqueItems": true
+}
 ```
 
-### Резюме кандидата
+- `keyword` — search terms sent to LinkedIn
+- `location` — target job location
+- `maxItems` — maximum results per scraper run
+- `publishedAt` — time window (`r86400` = last 24 hours, `r43200` = last 12 hours)
+- `resumeKeywords` — your skill keywords for automatic stack matching; `aliases` let you catch variations
 
-У ноді **Find CV suggestions** → `customBody` → поле `resumeText` — замініть на свій текст резюме.
+### Candidate CV
 
-У ноді **LLM: calculate job relevance** → `text` → секція "Candidate Background" — замініть на свій опис.
-
-### Пороги фільтрації
-
-- **Skip irrelevant** (нод Switch): `keywordMatchScorePercentage >= 33` — мінімальний збіг ключових слів для обробки LLM
-- **SMS Gateway** (нод IF): `closeness_score >= 80` — мінімальний score для CV-аналізу та сповіщень
-
-### Gmail фільтр
-
-У ноді **Received LinkedIn Job Alert** → `filters.q`:
+```json
+"candidate_raw_cv": {
+  "full_name": "YOUR NAME",
+  "headline": "Your headline",
+  "contact": { "phone": "...", "email": "...", "linkedin": "...", "location": "..." },
+  "summary": "Your summary...",
+  "experience": [ ... ],
+  "education": [ ... ],
+  "languages": [ ... ],
+  "achievements": [ ... ],
+  "skills": [ ... ]
+}
 ```
-subject:(React OR "React Native" OR "Node.js" OR "Full Stack" OR Frontend OR JavaScript OR TypeScript)
+Replace the entire object with your own CV data. This is used for LLM scoring, cover letter generation, resume improvement, and PDF generation. The structure must be preserved — the workflow splits it into locked fields (`full_name`, `contact`, `education`, `languages`, `achievements`) and modifiable fields (`headline`, `summary`, `experience`, `skills`).
+
+### Candidate Experience Level
+
+```json
+"candidate_experience_level": "mid"
+```
+Used by the LLM to calibrate scoring. Options: `junior`, `mid`, `senior`.
+
+### CV Theme
+
+```json
+"cv_theme": "chatgpt"
+```
+Default theme for generated resumes. See [CV Themes](#cv-themes) for all options.
+
+### PDF Options
+
+```json
+"pdf_options": {
+  "format": "A4",
+  "printBackground": true,
+  "emulateMediaType": "screen",
+  "margin": { "top": "0mm", "right": "0mm", "bottom": "0mm", "left": "0mm" }
+}
 ```
 
-Додайте свої ключові слова пошуку LinkedIn Alerts.
+> **Tip:** Change `"emulateMediaType"` to `"print"` to make templates more printer-friendly. The output will look a bit duller (muted colors, simplified backgrounds) but is better suited for physical printing.
 
-## Вартість
+### Message Template
 
-| Сервіс | Вартість |
-|--------|----------|
-| LinkedIn Jobs Scraper | від $0.60 / 1,000 вакансій | Приблизно ~20-30 вакансій за запит |
-| AI Resume Gap Analyzer | від $0.01 / 1,000 запитів |
-| LinkedIn Jobs Scraper - Professional Job Listings | від $2 / 1,000 вакансій | Поставлено ліміт в одну вакансію за запит |
-| Google Gemini Flash Lite | безкоштовно (free tier) |
-| Telegram / Slack | безкоштовно |
-| Gmail | безкоштовно |
+The `message_template` field contains the HTML template for Telegram notifications. Placeholders like `[Job Title]`, `[Company Name]`, `[Score]` are replaced by the LLM normalization step.
 
-При 6 запусках на добу (кожні 4 години): **~$0.10/день** або **~$3/місяць** на Apify.
+## CV Themes
 
-Для зменшення витрат: зменшіть кількість ключових слів, збільшіть інтервал тригера, або використовуйте `publishedAt: "r43200"` (12 годин замість 24).
+The workflow includes 11 visual themes for PDF resumes, each implemented as a standalone HTML builder node:
+
+| Theme | Style |
+|-------|-------|
+| `classic` | Clean, traditional resume layout |
+| `anthropic` | Inspired by Anthropic's brand aesthetic |
+| `gemini` | Google Gemini-inspired design |
+| `chatgpt` | OpenAI ChatGPT-inspired design |
+| `deepseek` | DeepSeek-inspired design |
+| `grok` | xAI Grok-inspired design |
+| `perplexity` | Perplexity AI-inspired design |
+| `vscode` | VS Code editor-inspired light theme |
+| `react` | React.js documentation-inspired design |
+| `behance` | Behance portfolio-inspired creative layout |
+| `figma` | Figma-inspired design tool aesthetic |
+
+Set the default theme in the Configuration node (`cv_theme` field), or change it per-CV via the Telegram bot's theme picker.
+
+## Telegram Bot Commands
+
+After receiving a job notification with an attached PDF resume, the user sees inline buttons:
+
+| Button | Action |
+|--------|--------|
+| ✏️ Перегенерувати | Enter a custom prompt (e.g., "emphasize backend experience") and the LLM regenerates the resume accordingly |
+| 📐 Масштаб | Adjust the PDF scale factor (useful if content overflows one page) |
+| 🎨 Тема | Switch to a different CV theme for this specific resume |
+| 🔄 Тема за замовч. | Change the default theme used for all future resumes |
+
+The bot uses n8n's **Wait** nodes to pause execution and wait for user input, creating an interactive conversational flow entirely within Telegram.
+
+## Cost Breakdown
+
+| Service | Cost | Notes |
+|---------|------|-------|
+| LinkedIn Jobs Scraper (keyword search) | ~$0.60 / 1,000 jobs | ~20-30 jobs per query |
+| LinkedIn Jobs Scraper (URL detail) | ~$2 / 1,000 jobs | Limited to 1 job per request |
+| Google Gemini Flash Lite | Free tier | Multiple LLM calls per qualifying job |
+| pdfspark.dev | Check pricing | HTML→PDF conversion |
+| Telegram | Free | Bot API |
+| Gmail | Free | OAuth2 API |
+
+At 6 runs per day (every 4 hours) with the Gmail trigger running every 30 minutes: approximately **~$0.10-0.15/day** or **~$3-5/month** on Apify.
+
+To reduce costs: use fewer search keywords, increase the cron interval, lower `maxItems`, use `publishedAt: "r43200"` (12 hours instead of 24), or raise the `keyword_match_threshold` to send fewer jobs to LLM.
+
+## Limitations
+
+- **Single user.** The workflow is designed for one candidate. The Configuration node holds one CV and one chat ID.
+- **LinkedIn scraping dependency.** Relies on Apify actors which may break if LinkedIn changes its page structure.
+- **pdfspark.dev dependency.** PDF generation depends on an external API. If it goes down, CVs won't be generated.
+- **No persistent job deduplication across workflow versions.** Deduplication relies on n8n's built-in Remove Duplicates node which tracks within execution scope. If you reimport the workflow, previously seen jobs may reappear.
+- **Gmail polling, not push.** The Gmail source polls every 30 minutes, so there can be up to a 30-minute delay for email-triggered jobs.
+- **Rate limiting is basic.** A 5-second delay between job iterations. Heavy runs with many qualifying jobs may take significant time.
+- **LLM hallucination risk.** Cover letters and resume improvements are generated by LLM. Review before sending to employers.
+- **Data Table coupling.** The CV regeneration flow requires an n8n Data Table (`cv_store`) to be created and linked manually.
+
+## Strengths
+
+- **End-to-end automation.** From job discovery to tailored resume delivery — fully hands-off for the daily flow.
+- **Centralized configuration.** Everything in one node — easy to understand, modify, and maintain.
+- **Smart cost optimization.** Two-stage filtering (keyword match → LLM score) avoids wasting tokens on irrelevant jobs.
+- **Tailored resumes at scale.** Each qualifying job gets a purpose-built CV with ATS-optimized keywords, not a generic one.
+- **Interactive Telegram bot.** Regenerate, restyle, and rescale CVs without opening n8n or any other tool.
+- **11 visual themes.** Professional variety for different industries and personal taste.
+- **Dual input sources.** Cron-based search catches broad results; Gmail alerts catch jobs matching LinkedIn's own recommendation engine.
+- **Ukrainian localization.** All messages, cover letters, and notifications are automatically translated to Ukrainian.
+- **Validation gate.** The workflow validates configuration on every run and stops early if required fields are missing.
+- **CV versioning via Data Table.** Previously generated resumes are stored and can be regenerated or restyled without re-running the full pipeline.
 
 <img width="1684" height="777" alt="image" src="https://github.com/user-attachments/assets/5a40f3c1-fd32-47e0-b4a8-859c4d3115c4" />
 
