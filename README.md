@@ -384,60 +384,49 @@ To reduce costs: use fewer search keywords, increase the cron interval, lower `m
 
 # 📰 News Feed Automation
 
-Автоматизований n8n-воркфлоу, який щоранку збирає статті з RSS-стрічок, створює короткі українськомовні анотації за допомогою Google Gemini і публікує їх у Telegram-канал із зображеннями.
+An automated n8n workflow that collects articles from RSS feeds every morning, generates short Ukrainian-language summaries using Google Gemini, and publishes them to a Telegram channel with images.
 
 ---
 
-## Архітектура
+## Architecture
 
-```
-┌───────────────┐      ┌───────────┐      ┌──────────┐       ┌─────────────┐
-   Schedule       ───▶   URL List   ───▶   Split Out   ───▶    RSS Read   
-   (10:00 AM)            (9 feeds)        └──────────┘       └──────┬──────┘                        
-└───────────────┘      └───────────┘                                |
-                                                                    │
-                    ┌───────────────────────────────────────────────┘
-                    ▼
-             ┌─────────────┐        ┌───────────┐        ┌──────────┐      ┌──────────────────┐
-               Filter fresh   ───▶    Randomize   ───▶    Limit 15   ───▶  Remove Duplicates
-               (this year)          └───────────┘        └───────────┘       (cross-execution)
-             └─────────────┘                                               └───────┬──────────┘
-                                                                                   │
-                    ┌──────────────────────────────────────────────────────────────┘
-                    ▼
-          ┌──────────────────┐      ┌──────────────────┐       ┌─────────────┐
-            Loop Over Items    ───▶     Wait 5s (rate    ───▶   Gemini 2.5  
-             (batch by 1)               limit between             Flash LLM   
-          └────────┬─────────┘           iterations)             (summarize) 
-                   |                └────────┬─────────┘       └──────┬──────┘
-                   ▲                                                  │
-                   │                                                  ▼
-          ┌────────┴─────────┐                                ┌──────────────┐
-             Send Photo       ◀─────────────────────────────     Map Images  
-             to Telegram                                         (fallbacks) 
-          └──────────────────┘                                └──────────────┘
+```mermaid
+flowchart TD
+    SCHED["⏰ Schedule Trigger\n(10:00 AM)"] --> URLS["📋 URL List\n(9 feeds)"]
+    URLS --> SPLIT["Split Out"]
+    SPLIT --> RSS["📡 RSS Read"]
+    RSS --> FRESH["🔍 Filter fresh\n(current year only)"]
+    FRESH --> RAND["🔀 Randomize"]
+    RAND --> LIM["✂️ Limit to 15"]
+    LIM --> DEDUP["🔒 Remove Duplicates\n(cross-execution)"]
+    DEDUP --> LOOP["🔁 Loop Over Items\n(batch by 1)"]
+    LOOP --> WAIT["⏳ Wait 5s\n(rate limiting)"]
+    WAIT --> LLM["🤖 Gemini 2.5 Flash\n(summarize)"]
+    LLM --> IMG["🖼️ Map Images\n(fallbacks)"]
+    IMG --> TG["📱 Send Photo\nto Telegram"]
+    TG --> LOOP
 ```
 
 ---
 
-## Що робить воркфлоу
+## What the Workflow Does
 
-1. **Тригер за розкладом** — запускається щодня о 10:00.
-2. **Збір RSS** — обходить 9 RSS-стрічок (tech, AI, українські медіа).
-3. **Фільтрація** — залишає лише статті поточного року.
-4. **Рандомізація + ліміт** — перемішує та обрізає до 15 статей.
-5. **Дедуплікація** — прибирає статті, які вже надсилались у попередніх запусках (за ключем `creator + link`).
-6. **LLM-саммарі** — Gemini 2.5 Flash генерує коротку анотацію українською (до 1024 символів, Telegram HTML).
-7. **Підбір зображення** — бере `enclosure.url` зі статті або підставляє фолбек-логотип за доменом.
-8. **Публікація** — надсилає фото з підписом у Telegram-чат.
-9. **Rate limiting** — між ітераціями 5-секундна пауза, щоб не потрапити в ліміти API.
+1. **Scheduled trigger** — runs daily at 10:00 AM.
+2. **RSS collection** — iterates over 9 RSS feeds (tech, AI, Ukrainian media).
+3. **Filtering** — keeps only articles from the current year.
+4. **Randomization + limit** — shuffles and trims to 15 articles.
+5. **Deduplication** — removes articles already sent in previous runs (keyed by `creator + link`).
+6. **LLM summary** — Gemini 2.5 Flash generates a short annotation in Ukrainian (up to 1024 characters, Telegram HTML).
+7. **Image selection** — takes `enclosure.url` from the article or falls back to a domain-specific logo.
+8. **Publishing** — sends a photo with caption to the Telegram chat.
+9. **Rate limiting** — 5-second pause between iterations to avoid hitting API limits.
 
 ---
 
-## RSS-джерела
+## RSS Sources
 
-| Джерело | URL |
-|---------|-----|
+| Source | URL |
+|--------|-----|
 | Hacker News (frontpage) | `https://hnrss.org/frontpage` |
 | DEV.to | `https://dev.to/feed/` |
 | OpenAI Blog | `https://openai.com/news/rss.xml` |
@@ -446,228 +435,210 @@ To reduce costs: use fewer search keywords, increase the cron interval, lower `m
 | AIN.UA | `https://ain.ua/feed/` |
 | ITPro | `https://www.itpro.com/feeds.xml` |
 | ITC.UA | `https://itc.ua/ua/feed/` |
-| УНІАН | `https://rss.unian.net/site/news_ukr.rss` |
+| UNIAN | `https://rss.unian.net/site/news_ukr.rss` |
 
 ---
 
-## Вимоги
+## Requirements
 
-- **n8n** — self-hosted або n8n Cloud
-- **Google Gemini API** — ключ для моделі `gemini-2.5-flash`
-- **Telegram Bot** — токен бота + ID чату для публікації
+- **n8n** — self-hosted or n8n Cloud
+- **Google Gemini API** — API key for the `gemini-2.5-flash` model
+- **Telegram Bot** — bot token + chat ID for publishing
 
 ---
 
-## Налаштування
+## Setup
 
-### 1. Імпорт воркфлоу
+### 1. Import the Workflow
 
-1. Відкрийте n8n → **Workflows** → **Import from File**.
-2. Завантажте JSON-файл воркфлоу.
+1. Open n8n → **Workflows** → **Import from File**.
+2. Upload the workflow JSON file.
 
 ### 2. Credentials
 
-Потрібно створити два credentials у n8n:
+You need to create two credentials in n8n:
 
 **Google Gemini:**
-- Перейдіть до **Settings** → **Credentials** → **New Credential**.
-- Тип: `Google Gemini Chat Model`.
-- Вставте ваш API-ключ Google AI Studio.
+- Go to **Settings** → **Credentials** → **New Credential**.
+- Type: `Google Gemini Chat Model`.
+- Paste your Google AI Studio API key.
 
 **Telegram Bot:**
-- Тип: `Telegram API`.
-- Вставте токен бота (отримайте через [@BotFather](https://t.me/BotFather)).
+- Type: `Telegram API`.
+- Paste the bot token (get it via [@BotFather](https://t.me/BotFather)).
 
-### 3. Налаштування чату Telegram
+### 3. Telegram Chat Configuration
 
-У ноді **"Send a post to TG"** замініть `chatId` на ID вашого каналу або чату
+In the **"Send a post to TG"** node, replace `chatId` with your channel or chat ID.
 
-### 4. Кастомізація джерел
+### 4. Customizing Sources
 
-Відредагуйте масив URL-адрес у ноді **"Url sources"**. Додайте або видаліть RSS-стрічки за потреби.
+Edit the URL array in the **"Url sources"** node. Add or remove RSS feeds as needed.
 
-### 5. Активація
+### 5. Activation
 
-Увімкніть воркфлоу тумблером — він запускатиметься автоматично щодня о 10:00.
-
----
-
-## Структура нод
-
-| Нода | Тип | Призначення |
-|------|-----|-------------|
-| Call every morning (10AM) | Schedule Trigger | Щоденний запуск |
-| Url sources | Set | Масив RSS-стрічок |
-| Split Out | Split Out | Розгортає масив в окремі items |
-| RSS Read | RSS Feed Read | Зчитує статті з кожного RSS |
-| Pick fresh posts | Filter | Фільтрує за поточним роком |
-| Randomize | Sort (random) | Перемішує статті |
-| Limit to 15 | Limit | Обмежує кількість |
-| Remove Duplicates | Remove Duplicates | Виключає раніше надіслані |
-| Loop Over Items | Split In Batches | Обробка по одній статті |
-| If not the first iteration | If | Пропускає паузу для першої |
-| Wait 5 seconds | Wait | Пауза між публікаціями |
-| LLM: process a post | Chain LLM | Генерація анотації (Gemini) |
-| Google Gemini Chat Model | LM Chat | Модель для LLM-ноди |
-| Map images | Code | Вибір зображення або фолбеку |
-| Send a post to TG | Telegram | Публікація в Telegram |
+Toggle the workflow on — it will run automatically every day at 10:00 AM.
 
 ---
 
-## Формат повідомлення у Telegram
+## Node Structure
 
-Кожна публікація надсилається як фото з HTML-підписом:
+| Node | Type | Purpose |
+|------|------|---------|
+| Call every morning (10AM) | Schedule Trigger | Daily trigger |
+| Url sources | Set | Array of RSS feed URLs |
+| Split Out | Split Out | Expands array into individual items |
+| RSS Read | RSS Feed Read | Reads articles from each RSS feed |
+| Pick fresh posts | Filter | Filters by current year |
+| Randomize | Sort (random) | Shuffles articles |
+| Limit to 15 | Limit | Caps the number of articles |
+| Remove Duplicates | Remove Duplicates | Excludes previously sent articles |
+| Loop Over Items | Split In Batches | Processes one article at a time |
+| If not the first iteration | If | Skips the pause for the first item |
+| Wait 5 seconds | Wait | Pause between publications |
+| LLM: process a post | Chain LLM | Summary generation (Gemini) |
+| Google Gemini Chat Model | LM Chat | Model for the LLM node |
+| Map images | Code | Image selection or fallback |
+| Send a post to TG | Telegram | Publishes to Telegram |
+
+---
+
+## Telegram Message Format
+
+Each post is sent as a photo with an HTML caption:
 
 ```
-<b>Заголовок статті</b>
+<b>Article Title</b>
 
-<i>Автор:</i> Ім'я
-<i>Дата:</i> 17.05.2026
-<i>Категорія:</i> AI, Machine Learning
+<i>Author:</i> Name
+<i>Date:</i> 17.05.2026
+<i>Category:</i> AI, Machine Learning
 
-Коротка анотація українською — 2-3 речення
-про що стаття та чому може бути корисна.
+Short annotation in Ukrainian — 2-3 sentences
+about the article and why it might be useful.
 
-<a href="https://...">Читати повністю</a>
+<a href="https://...">Read full article</a>
 ```
 
 ---
 
-## Фолбек-зображення
+## Fallback Images
 
-Якщо стаття не містить `enclosure.url`, підставляється логотип джерела:
+If an article has no `enclosure.url`, a source logo is used instead:
 
-| Домен | Фолбек |
-|-------|--------|
-| openai.com | Логотип OpenAI |
-| deepmind.google | Логотип DeepMind |
-| ain.ua | Логотип AIN |
-| itc.ua | Логотип ITC |
-| dev.to | Логотип DEV |
-| css-tricks.com | Логотип CSS-Tricks |
-| itpro.com | Логотип ITPro |
-| unian.net | Логотип УНІАН |
-| (інше) | Стокова картинка новин |
+| Domain | Fallback |
+|--------|----------|
+| openai.com | OpenAI logo |
+| deepmind.google | DeepMind logo |
+| ain.ua | AIN logo |
+| itc.ua | ITC logo |
+| dev.to | DEV logo |
+| css-tricks.com | CSS-Tricks logo |
+| itpro.com | ITPro logo |
+| unian.net | UNIAN logo |
+| (other) | Stock news image |
 
 ---
 
-## Можливі проблеми
+## Possible Issues
 
-- **RSS недоступний** — нода RSS Read має `onError: continueRegularOutput`, тому один збій не зупиняє весь воркфлоу.
-- **Gemini rate limit** — 5-секундна пауза між ітераціями мінімізує ризик, але при великій кількості публікацій збільшіть паузу.
-- **Telegram rate limit** — Telegram обмежує ботів до ~30 повідомлень на секунду; 15 повідомлень з паузами не повинні викликати проблем.
-- **Фолбек-зображення недоступне** — замініть URL у ноді "Map images" на альтернативне.
+- **RSS unavailable** — the RSS Read node has `onError: continueRegularOutput`, so a single feed failure won't stop the entire workflow.
+- **Gemini rate limit** — the 5-second pause between iterations minimizes risk, but increase the delay if you process more articles.
+- **Telegram rate limit** — Telegram limits bots to ~30 messages per second; 15 messages with pauses shouldn't cause issues.
+- **Fallback image unavailable** — replace the URL in the "Map images" node with an alternative.
 
 ---
 
 <img width="1684" height="778" alt="image" src="https://github.com/user-attachments/assets/a5834121-9ed7-465e-be1f-bc896c47a50c" />
 
+---
+
 # 🛒 AliExpress Scraper via Apify
 
-Автоматизований n8n-воркфлоу, який щотижня скрапить товари з AliExpress через Apify, нормалізує дані та публікує картки товарів у Telegram із цінами, знижками та рейтингами.
+An automated n8n workflow that scrapes products from AliExpress weekly via Apify, normalizes the data, and publishes product cards to Telegram with prices, discounts, and ratings.
 
 ---
 
-## Архітектура
+## Architecture
 
-```
-┌────────────────┐      ┌─────────────────────┐
- Schedule Trigger  ───▶       Apify Actor         
-   (Sat 12:00)            (AliExpress Scraper) 
-└────────────────┘      └──────────┬───────────┘
-                                   │
-                       ┌───────────┴───────┐
-                       │                   │
-                    success              error
-                       │                   │
-                       ▼                   ▼
-              ┌─────────────────┐  ┌──────────────────┐
-               Remove Duplicates     Send error alert  
-                 (by productId)        to Telegram       
-              └────────┬────────┘  └──────────────────┘
-                       │
-                       ▼
-              ┌─────────────────┐
-                 Normalize Data  
-                  (Code node)     
-              └────────┬────────┘
-                       │
-                       ▼
-              ┌─────────────────┐
-                Send photo msg   
-                  to Telegram      
-              └─────────────────┘
+```mermaid
+flowchart TD
+    SCHED["⏰ Schedule Trigger\n(Sat 12:00)"] --> APIFY["🕷️ Apify Actor\n(AliExpress Scraper)"]
+    APIFY -->|success| DEDUP["🔒 Remove Duplicates\n(by productId)"]
+    APIFY -->|error| ERR["⚠️ Send error alert\nto Telegram"]
+    DEDUP --> NORM["⚙️ Normalize Data\n(Code node)"]
+    NORM --> TG["📱 Send photo message\nto Telegram"]
 ```
 
 ---
 
-## Що робить воркфлоу
+## What the Workflow Does
 
-1. **Тригер за розкладом** — запускається щосуботи о 12:00.
-2. **Скрапінг** — Apify actor `mfblss3fLQRaqhg6K` шукає товари за запитами (`fpv`, `graphic cards`, `LiPo`, `vtx`), сортуючи за рейтингом, до 10 товарів на запит.
-3. **Обробка помилок** — якщо актор впав після 3 ретраїв, у Telegram надсилається алерт з деталями помилки.
-4. **Дедуплікація** — видаляє дублікати за `productId`.
-5. **Нормалізація** — Code-нода трансформує сирі дані Apify в чистий формат: ціна, знижка, рейтинг, зображення, купони тощо.
-6. **Публікація** — кожен товар надсилається у Telegram як фото з HTML-підписом.
-
----
-
-## Пошукові запити
-
-За замовчуванням воркфлоу шукає:
-
-| Запит | Опис |
-|-------|------|
-| `fpv` | FPV-дрони та комплектуючі |
-| `graphic cards` | Відеокарти |
-| `LiPo` | LiPo-акумулятори |
-| `vtx` | Відеопередавачі для FPV |
-
-Щоб змінити запити, відредагуйте масив `queries` у ноді **"Run an Actor and get dataset"**.
+1. **Scheduled trigger** — runs every Saturday at 12:00.
+2. **Scraping** — Apify actor `mfblss3fLQRaqhg6K` searches products by queries (`fpv`, `graphic cards`, `LiPo`, `vtx`), sorted by rating, up to 10 products per query.
+3. **Error handling** — if the actor fails after 3 retries, a Telegram alert is sent with error details.
+4. **Deduplication** — removes duplicates by `productId`.
+5. **Normalization** — a Code node transforms raw Apify data into a clean format: price, discount, rating, image, coupons, etc.
+6. **Publishing** — each product is sent to Telegram as a photo with an HTML caption.
 
 ---
 
-## Вимоги
+## Search Queries
 
-- **n8n** — self-hosted або n8n Cloud
-- **Apify** — акаунт + OAuth2 credentials (або API-токен)
-- **Telegram Bot** — токен бота + ID чату
+By default, the workflow searches for:
+
+| Query | Description |
+|-------|-------------|
+| `fpv` | FPV drones and components |
+| `graphic cards` | Graphics cards |
+| `LiPo` | LiPo batteries |
+| `vtx` | Video transmitters for FPV |
+
+To change the queries, edit the `queries` array in the **"Run an Actor and get dataset"** node.
 
 ---
 
-## Налаштування
+## Requirements
 
-### 1. Імпорт воркфлоу
+- **n8n** — self-hosted or n8n Cloud
+- **Apify** — account + OAuth2 credentials (or API token)
+- **Telegram Bot** — bot token + chat ID
 
-1. Відкрийте n8n → **Workflows** → **Import from File**.
-2. Завантажте JSON-файл воркфлоу.
+---
+
+## Setup
+
+### 1. Import the Workflow
+
+1. Open n8n → **Workflows** → **Import from File**.
+2. Upload the workflow JSON file.
 
 ### 2. Credentials
 
 **Apify:**
-- Перейдіть до **Settings** → **Credentials** → **New Credential**.
-- Тип: `Apify OAuth2 API`.
-- Авторизуйтесь через Apify або вставте API-токен з [Apify Console](https://console.apify.com/account#/integrations).
+- Go to **Settings** → **Credentials** → **New Credential**.
+- Type: `Apify OAuth2 API`.
+- Authorize via Apify or paste your API token from [Apify Console](https://console.apify.com/account#/integrations).
 
 **Telegram Bot:**
-- Тип: `Telegram API`.
-- Вставте токен бота (отримайте через [@BotFather](https://t.me/BotFather)).
+- Type: `Telegram API`.
+- Paste the bot token (get it via [@BotFather](https://t.me/BotFather)).
 
-### 3. Налаштування Telegram Chat ID
+### 3. Telegram Chat ID Configuration
 
-Заповніть `chatId` у двох нодах:
+Fill in the `chatId` in two nodes:
 
-- **"Send a photo message"** — основні публікації товарів.
-- **"Send an error message"** — алерти про помилки.
+- **"Send a photo message"** — main product publications.
+- **"Send an error message"** — error alerts.
 
-Щоб дізнатися ID:
-- Надішліть повідомлення боту.
-- Зробіть запит: `https://api.telegram.org/bot<TOKEN>/getUpdates`.
-- Знайдіть `chat.id` у відповіді.
+To find your chat ID:
+- Send a message to your bot.
+- Make a request: `https://api.telegram.org/bot<TOKEN>/getUpdates`.
+- Find `chat.id` in the response.
 
-### 4. Налаштування пошуку
+### 4. Search Configuration
 
-У ноді **"Run an Actor and get dataset"** відредагуйте `customBody`:
+In the **"Run an Actor and get dataset"** node, edit `customBody`:
 
 ```json
 {
@@ -683,39 +654,39 @@ To reduce costs: use fewer search keywords, increase the cron interval, lower `m
 }
 ```
 
-| Параметр | Опис |
-|----------|------|
-| `maxItems` | Макс. кількість товарів на запит |
-| `queries` | Масив пошукових запитів |
-| `sortBy` | Сортування: `rating`, `price`, `orders` |
-| `includeDescription` | Включити опис товару |
-| `includeReviews` | Включити відгуки (збільшує час) |
+| Parameter | Description |
+|-----------|-------------|
+| `maxItems` | Max products per query |
+| `queries` | Array of search queries |
+| `sortBy` | Sort order: `rating`, `price`, `orders` |
+| `includeDescription` | Include product description |
+| `includeReviews` | Include reviews (increases run time) |
 
-### 5. Активація
+### 5. Activation
 
-Увімкніть воркфлоу — він запуститься автоматично щосуботи о 12:00.
-
----
-
-## Структура нод
-
-| Нода | Тип | Призначення |
-|------|-----|-------------|
-| Schedule Trigger | Schedule Trigger | Щотижневий запуск (субота, 12:00) |
-| Run an Actor and get dataset | Apify | Запуск скрапера AliExpress |
-| Remove Duplicates | Remove Duplicates | Дедуплікація за `productId` |
-| Normalize Data | Code | Трансформація в чистий формат |
-| Send a photo message | Telegram | Публікація картки товару |
-| Send an error message | Telegram | Алерт про помилку скрапера |
+Toggle the workflow on — it will run automatically every Saturday at 12:00.
 
 ---
 
-## Формат повідомлення у Telegram
+## Node Structure
 
-Кожен товар надсилається як фото з підписом:
+| Node | Type | Purpose |
+|------|------|---------|
+| Schedule Trigger | Schedule Trigger | Weekly trigger (Saturday, 12:00) |
+| Run an Actor and get dataset | Apify | Runs the AliExpress scraper |
+| Remove Duplicates | Remove Duplicates | Deduplication by `productId` |
+| Normalize Data | Code | Transforms data into a clean format |
+| Send a photo message | Telegram | Publishes a product card |
+| Send an error message | Telegram | Error alert |
+
+---
+
+## Telegram Message Format
+
+Each product is sent as a photo with a caption:
 
 ```
-Назва товару
+Product Title
 
 💰 $12.99  $29.99  (-57%)
 ⭐ 4.8  •  📦 1,234 sold
@@ -726,12 +697,12 @@ To reduce costs: use fewer search keywords, increase the cron interval, lower `m
 
 ---
 
-## Нормалізовані поля
+## Normalized Fields
 
-Code-нода `Normalize Data` витягує наступні поля:
+The `Normalize Data` Code node extracts the following fields:
 
-| Поле | Джерело | Фолбек |
-|------|---------|--------|
+| Field | Source | Fallback |
+|-------|--------|----------|
 | `productId` | `d.productId` | `''` |
 | `title` | `d.title.displayTitle` | `''` |
 | `currentPrice` | `d.prices.salePrice.minPrice` | `d.extractedData.currentPrice` |
@@ -743,27 +714,27 @@ Code-нода `Normalize Data` витягує наступні поля:
 | `storeName` | `d.store.storeName` | `''` |
 | `coupons` | `d.sellingPoints[].tagContent.tagText` | `''` |
 
-> Якщо Apify змінить схему відповіді, адаптуйте маппінг у цій ноді.
+> If Apify changes the response schema, update the mapping in this node.
 
 ---
 
-## Обробка помилок
+## Error Handling
 
-- **Retry policy** — нода Apify автоматично ретраїть до 3 разів із паузою 2 секунди.
-- **Error output** — при фінальному фейлі дані йдуть у другий вихід → алерт у Telegram з текстом помилки та посиланням на Apify Console.
-- **Продовження при помилках** — `onError: continueErrorOutput` дозволяє обробити помилку замість зупинки воркфлоу.
-
----
-
-## Можливі проблеми
-
-- **Apify credits** — скрапінг витрачає кредити Apify; слідкуйте за балансом.
-- **Зміна схеми актора** — якщо автор актора оновить формат, поправте маппінг у `Normalize Data`.
-- **AliExpress блокування** — актор може повертати менше результатів при агресивному скрапінгу; зменшіть `maxItems` або збільшіть інтервал.
-- **Порожній `chatId`** — не забудьте заповнити ID чату в обох Telegram-нодах.
+- **Retry policy** — the Apify node automatically retries up to 3 times with a 2-second delay.
+- **Error output** — on final failure, data goes to the second output → Telegram alert with error text and a link to Apify Console.
+- **Continue on error** — `onError: continueErrorOutput` allows error handling instead of stopping the workflow.
 
 ---
 
-## Ліцензія
+## Possible Issues
 
-MIT — використовуйте, модифікуйте, діліться вільно.
+- **Apify credits** — scraping consumes Apify credits; monitor your balance.
+- **Actor schema changes** — if the actor author updates the format, fix the mapping in `Normalize Data`.
+- **AliExpress blocking** — the actor may return fewer results with aggressive scraping; reduce `maxItems` or increase the interval.
+- **Empty `chatId`** — don't forget to fill in the chat ID in both Telegram nodes.
+
+---
+
+## License
+
+MIT — use, modify, and share freely.
